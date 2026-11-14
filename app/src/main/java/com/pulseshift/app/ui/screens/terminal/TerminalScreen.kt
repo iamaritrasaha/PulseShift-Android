@@ -70,6 +70,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+
 /**
  * PulseShift Terminal: a scrollable monospace command console over the real
  * BLE protocol. Every response line comes from the device — nothing is
@@ -99,10 +102,11 @@ fun TerminalScreen(
         "RPM STATUS",
         "CONFIG STATUS",
         "CONFIG SAVE",
-        "STAGE 1000 2000 3000 4000 5000 6000",
-        "EFFECT 4",
         "EFFECT 5",
-        "CAPTURE 10"
+        "STAGE 1",
+        "CAPTURE START",
+        "CAPTURE STOP",
+        "LOGS"
     )
 
     // Auto-scroll to the newest line.
@@ -132,32 +136,13 @@ fun TerminalScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF101014))
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
-                                contentDescription = "PulseShift",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        Column {
-                            Text("Hardware Terminal", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = device?.let { "${it.name ?: "PulseShift"} · fw ${it.firmwareVersion ?: "?"}" } ?: "ESP32 Console",
-                                style = PulseShiftMonoTiny,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    Column {
+                        Text("Hardware Terminal", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = device?.let { "${it.name ?: "PulseShift"} · fw ${it.firmwareVersion ?: "?"}" } ?: "ESP32 Console",
+                            style = PulseShiftMonoTiny,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 },
                 navigationIcon = {

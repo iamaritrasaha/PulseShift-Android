@@ -49,6 +49,71 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.ui.draw.clip
+
+/**
+ * Classic connected PulseShift slider.
+ *
+ * Material3 1.3's default slider draws a detached "expressive" handle with a
+ * gap between track and thumb, which reads as a broken track on the cockpit
+ * screens. This restores the classic continuous fill: rounded 6dp track,
+ * solid fill to the value, circular 20dp thumb centered on the fill edge.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun PulseShiftSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    onValueChangeFinished: (() -> Unit)? = null,
+) {
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = valueRange,
+        enabled = enabled,
+        modifier = modifier,
+        thumb = {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        },
+        track = { sliderState ->
+            val fraction = ((sliderState.value - sliderState.valueRange.start) /
+                (sliderState.valueRange.endInclusive - sliderState.valueRange.start))
+                .coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        },
+        colors = SliderDefaults.colors(
+            activeTrackColor = MaterialTheme.colorScheme.primary,
+            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            thumbColor = MaterialTheme.colorScheme.primary
+        )
+    )
+}
 
 /**
  * Reusable PulseShift UI vocabulary. Every screen composes these instead of

@@ -49,9 +49,9 @@ fun LedStripPreview(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF0F0E14))
-            .padding(vertical = 24.dp, horizontal = 16.dp)
+            .padding(vertical = 10.dp, horizontal = 8.dp)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -64,14 +64,14 @@ fun LedStripPreview(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
-                    .background(Color(0xFF18171E), RoundedCornerShape(18.dp))
+                    .height(72.dp)
+                    .background(Color(0xFF18171E), RoundedCornerShape(14.dp))
                     .border(
                         width = if (isAllSelected) 1.5.dp else 1.dp,
                         color = if (isAllSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(18.dp)
+                        shape = RoundedCornerShape(14.dp)
                     )
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 10.dp)
             ) {
                 effectiveColors.forEachIndexed { index, rgb ->
                     val isSelected = selectedIndex == index

@@ -33,7 +33,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -56,6 +55,7 @@ import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.ui.components.LedStripPreview
+import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
 import com.pulseshift.app.ui.components.StatusDot
 import com.pulseshift.app.ui.theme.HardwareAmberWarning
@@ -68,8 +68,10 @@ import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
 import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
 
 import com.pulseshift.app.ui.components.StatusPill
-import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import com.pulseshift.app.ui.theme.PulseShiftMonoDisplay
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
@@ -156,7 +158,12 @@ fun HomeScreen(
                 }
             }
         }
-        SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        )
     }
 }
 
@@ -400,7 +407,7 @@ private fun LightControlCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Slider(
+        PulseShiftSlider(
             value = lighting.brightness.toFloat(),
             onValueChange = { viewModel.updateBrightness(it.toInt()) },
             valueRange = 0f..255f
@@ -408,9 +415,10 @@ private fun LightControlCard(
         Spacer(Modifier.height(PulseShiftSpacing.SmallLabel))
         Button(
             onClick = onNavigateToLighting,
+            shape = PulseShiftShapeTokens.Control,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(PulseShiftSpacing.MinTouchTarget)
         ) {
             Text("Open Lighting Studio")
         }
@@ -447,7 +455,7 @@ private fun QuickAction(
             .height(72.dp)
             .clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        shape = RoundedCornerShape(12.dp)
+        shape = PulseShiftShapeTokens.Control
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

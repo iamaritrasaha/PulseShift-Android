@@ -82,6 +82,13 @@ import com.pulseshift.app.domain.model.DiagnosticLogMessage
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LogSeverity
 import com.pulseshift.app.domain.model.RpmTelemetryState
+import com.pulseshift.app.ui.components.StatusPill
+import com.pulseshift.app.ui.theme.HardwareAmberWarning
+import com.pulseshift.app.ui.theme.HardwareGreenVerified
+import com.pulseshift.app.ui.theme.HardwareRedError
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -114,152 +121,142 @@ fun LogsScreen(
 
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF101014))
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
-                                contentDescription = "PulseShift",
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                        Text("Diagnostics & Health", style = MaterialTheme.typography.titleMedium)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToTerminal) {
-                        Icon(Icons.Rounded.Terminal, contentDescription = "Open Hardware Terminal")
-                    }
-                    if (selectedTab == 1) {
-                        IconButton(onClick = { showSearchField = !showSearchField }) {
-                            Icon(Icons.Rounded.Search, contentDescription = "Search Logs")
-                        }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Top Header: Title & Actions (Single Top Bar owner architecture)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PulseShiftSpacing.ScreenHorizontal,
+                    end = PulseShiftSpacing.ScreenHorizontal,
+                    top = PulseShiftSpacing.ScreenVertical,
+                    bottom = PulseShiftSpacing.SmallGap
+                ),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Diagnostics & Health",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(PulseShiftSpacing.Micro))
+                Text(
+                    text = "Real-time CAN telemetry, bus state & system logs",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-                        IconButton(onClick = { showExportMenu = true }) {
-                            Icon(Icons.Rounded.Share, contentDescription = "Export Logs")
-                        }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val currentHealth = canHealth
+                val isCanHealthy = currentHealth != null && !currentHealth.hasLossOrErrors
+                StatusPill(
+                    text = if (isCanHealthy) "CAN OK" else "CAN INIT",
+                    color = if (isCanHealthy) HardwareGreenVerified else HardwareAmberWarning
+                )
 
-                        DropdownMenu(
-                            expanded = showExportMenu,
-                            onDismissRequest = { showExportMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Copy Text to Clipboard") },
-                                onClick = {
-                                    showExportMenu = false
-                                    val text = viewModel.exportAsText()
-                                    clipboardManager.setText(AnnotatedString(text))
-                                    Toast.makeText(context, "Diagnostic logs copied to clipboard", Toast.LENGTH_SHORT).show()
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }
-                            )
+                FilledTonalButton(
+                    onClick = onNavigateToTerminal,
+                    shape = PulseShiftShapeTokens.Control,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(PulseShiftSpacing.Micro))
+                    Text("Terminal", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
 
-                            DropdownMenuItem(
-                                text = { Text("Share as Text File") },
-                                onClick = {
-                                    showExportMenu = false
-                                    val text = viewModel.exportAsText()
-                                    shareLogContent(context, text, "text/plain", "PulseShift_Diagnostic_Logs.txt")
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }
-                            )
-
-                            DropdownMenuItem(
-                                text = { Text("Share as CSV") },
-                                onClick = {
-                                    showExportMenu = false
-                                    val csv = viewModel.exportAsCsv()
-                                    shareLogContent(context, csv, "text/csv", "PulseShift_Diagnostic_Logs.csv")
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null) }
-                            )
-                        }
-
-                        IconButton(onClick = { viewModel.clearLogs() }) {
-                            Icon(Icons.Rounded.ClearAll, contentDescription = "Clear Logs")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = PulseShiftSpacing.ScreenHorizontal)
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("Health Overview") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("Event Logs") }
+            )
+            Tab(
+                selected = selectedTab == 2,
+                onClick = { selectedTab = 2 },
+                text = { Text("Device & Capture") }
             )
         }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = MaterialTheme.colorScheme.background,
-                contentColor = MaterialTheme.colorScheme.primary
-            ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("Health Overview") }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("Event Logs & Export") }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = { Text("Device & Capture") }
-                )
-            }
 
-            when (selectedTab) {
-                0 -> DiagnosticsOverviewTab(
-                    canHealth = canHealth,
-                    rpmTelemetry = rpmTelemetry,
-                    connectedDevice = connectedDevice
-                )
-                1 -> EventLogsTab(
-                    logs = logs,
-                    loadingState = loadingState,
-                    searchQuery = searchQuery,
-                    showSearchField = showSearchField,
-                    selectedSeverity = selectedSeverity,
-                    nextHistoricalOffset = 0L,
-                    dateFormat = dateFormat,
-                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                    onSeverityFilterChange = { viewModel.setSeverityFilter(it) },
-                    onRequestPage = { viewModel.requestHistoricalLogPage(it) },
-                    onCancelRetrieval = { viewModel.cancelHistoricalLogRetrieval() }
-                )
-                2 -> DeviceCaptureTab(
-                    report = diagnosticsReport,
-                    captureExportState = captureExportState,
-                    commandHistory = commandHistory,
-                    connectedDevice = connectedDevice,
-                    dateFormat = dateFormat,
-                    onRefreshReport = { viewModel.requestDiagnosticsReport() },
-                    onReloadConfig = { viewModel.reloadConfigurationFromDevice() },
-                    onRestart = { showRestartConfirm = true },
-                    onClearDiagnostics = { showClearDiagConfirm = true },
-                    onStartRecording = { viewModel.setCaptureRecording(true) },
-                    onStopRecording = { viewModel.setCaptureRecording(false) },
-                    onStartCaptureExport = { viewModel.startCaptureExport() },
-                    onCancelCaptureExport = { viewModel.cancelCaptureExport() }
-                )
-            }
+        Spacer(Modifier.height(PulseShiftSpacing.SmallGap))
+
+        when (selectedTab) {
+            0 -> DiagnosticsOverviewTab(
+                canHealth = canHealth,
+                rpmTelemetry = rpmTelemetry,
+                connectedDevice = connectedDevice
+            )
+            1 -> EventLogsTab(
+                logs = logs,
+                loadingState = loadingState,
+                searchQuery = searchQuery,
+                showSearchField = showSearchField,
+                selectedSeverity = selectedSeverity,
+                nextHistoricalOffset = 0L,
+                dateFormat = dateFormat,
+                showExportMenu = showExportMenu,
+                onToggleSearch = { showSearchField = !showSearchField },
+                onOpenExportMenu = { showExportMenu = true },
+                onDismissExportMenu = { showExportMenu = false },
+                onExportCopy = {
+                    showExportMenu = false
+                    val text = viewModel.exportAsText()
+                    clipboardManager.setText(AnnotatedString(text))
+                    Toast.makeText(context, "Diagnostic logs copied to clipboard", Toast.LENGTH_SHORT).show()
+                },
+                onExportFile = {
+                    showExportMenu = false
+                    val text = viewModel.exportAsText()
+                    shareLogContent(context, text, "text/plain", "PulseShift_Diagnostic_Logs.txt")
+                },
+                onExportCsv = {
+                    showExportMenu = false
+                    val csv = viewModel.exportAsCsv()
+                    shareLogContent(context, csv, "text/csv", "PulseShift_Diagnostic_Logs.csv")
+                },
+                onClearLogs = { viewModel.clearLogs() },
+                onSearchQueryChange = { viewModel.setSearchQuery(it) },
+                onSeverityFilterChange = { viewModel.setSeverityFilter(it) },
+                onRequestPage = { viewModel.requestHistoricalLogPage(it) },
+                onCancelRetrieval = { viewModel.cancelHistoricalLogRetrieval() }
+            )
+            2 -> DeviceCaptureTab(
+                report = diagnosticsReport,
+                captureExportState = captureExportState,
+                commandHistory = commandHistory,
+                connectedDevice = connectedDevice,
+                dateFormat = dateFormat,
+                onRefreshReport = { viewModel.requestDiagnosticsReport() },
+                onReloadConfig = { viewModel.reloadConfigurationFromDevice() },
+                onRestart = { showRestartConfirm = true },
+                onClearDiagnostics = { showClearDiagConfirm = true },
+                onStartRecording = { viewModel.setCaptureRecording(true) },
+                onStopRecording = { viewModel.setCaptureRecording(false) },
+                onStartCaptureExport = { viewModel.startCaptureExport() },
+                onCancelCaptureExport = { viewModel.cancelCaptureExport() }
+            )
         }
     }
 
@@ -334,24 +331,29 @@ fun DeviceCaptureTab(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical),
+        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         // Device report card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Device Status", style = MaterialTheme.typography.titleMedium)
-                    FilledTonalButton(onClick = onRefreshReport, enabled = connected) {
-                        Text("Refresh")
+                    FilledTonalButton(
+                        onClick = onRefreshReport,
+                        enabled = connected,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("Refresh", style = MaterialTheme.typography.labelSmall)
                     }
                 }
                 if (report == null) {
@@ -383,27 +385,47 @@ fun DeviceCaptureTab(
 
         // Capture recording control
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("CAN Flash Recording", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onStartRecording, enabled = connected && !recording) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
+                    Button(
+                        onClick = onStartRecording,
+                        enabled = connected && !recording,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Start")
                     }
-                    OutlinedButton(onClick = onStopRecording, enabled = connected && recording) {
+                    OutlinedButton(
+                        onClick = onStopRecording,
+                        enabled = connected && recording,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Stop")
                     }
                 }
 
                 Text("Capture Export (bounded pages over BLE)", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onStartCaptureExport, enabled = connected && !exporting) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
+                    Button(
+                        onClick = onStartCaptureExport,
+                        enabled = connected && !exporting,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Export to phone")
                     }
-                    OutlinedButton(onClick = onCancelCaptureExport, enabled = exporting) {
+                    OutlinedButton(
+                        onClick = onCancelCaptureExport,
+                        enabled = exporting,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Cancel")
                     }
                 }
@@ -429,21 +451,36 @@ fun DeviceCaptureTab(
 
         // Device commands
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("Device Commands", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = onReloadConfig, enabled = connected) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
+                    FilledTonalButton(
+                        onClick = onReloadConfig,
+                        enabled = connected,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Reload config")
                     }
-                    OutlinedButton(onClick = onClearDiagnostics, enabled = connected) {
+                    OutlinedButton(
+                        onClick = onClearDiagnostics,
+                        enabled = connected,
+                        shape = PulseShiftShapeTokens.Control,
+                        modifier = Modifier.height(38.dp)
+                    ) {
                         Text("Clear diag history")
                     }
                 }
-                OutlinedButton(onClick = onRestart, enabled = connected) {
+                OutlinedButton(
+                    onClick = onRestart,
+                    enabled = connected,
+                    shape = PulseShiftShapeTokens.Control,
+                    modifier = Modifier.height(38.dp)
+                ) {
                     Text("Restart ESP32...")
                 }
                 Text(
@@ -456,11 +493,11 @@ fun DeviceCaptureTab(
 
         // Command history with lifecycle phases
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
                 Text("Command History", style = MaterialTheme.typography.titleMedium)
                 if (commandHistory.isEmpty()) {
                     Text("No device commands issued yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -504,16 +541,16 @@ fun DiagnosticsOverviewTab(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical),
+        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         // 1. CAN Bus & TWAI Controller Status Card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("CAN Bus & TWAI Health", style = MaterialTheme.typography.titleMedium)
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -542,11 +579,11 @@ fun DiagnosticsOverviewTab(
 
         // 2. BLE Interface & Target Device Info Card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("BLE Interface & Controller Info", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Connected Controller", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -569,11 +606,11 @@ fun DiagnosticsOverviewTab(
 
         // 3. ESP32 Flash Storage Card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("ESP32 Flash Storage & Recording", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("LittleFS File System", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -597,6 +634,14 @@ fun EventLogsTab(
     selectedSeverity: LogSeverity?,
     nextHistoricalOffset: Long,
     dateFormat: SimpleDateFormat,
+    showExportMenu: Boolean,
+    onToggleSearch: () -> Unit,
+    onOpenExportMenu: () -> Unit,
+    onDismissExportMenu: () -> Unit,
+    onExportCopy: () -> Unit,
+    onExportFile: () -> Unit,
+    onExportCsv: () -> Unit,
+    onClearLogs: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSeverityFilterChange: (LogSeverity?) -> Unit,
     onRequestPage: (Long) -> Unit,
@@ -611,8 +656,8 @@ fun EventLogsTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.SmallGap),
+        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
     ) {
         if (showSearchField) {
             OutlinedTextField(
@@ -620,7 +665,7 @@ fun EventLogsTab(
                 onValueChange = onSearchQueryChange,
                 placeholder = { Text("Search message text or ID...") },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = PulseShiftShapeTokens.Control,
                 singleLine = true,
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -632,41 +677,111 @@ fun EventLogsTab(
             )
         }
 
-        // Severity Filter Chips
+        // Toolbar: Filter Chips on the left, Search/Export/Clear Actions on the right
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Filter:", style = MaterialTheme.typography.labelMedium)
+            // Severity Filter Chips
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SeverityChip("All", selectedSeverity == null) {
+                    onSeverityFilterChange(null)
+                }
 
-            SeverityChip("All", selectedSeverity == null) {
-                onSeverityFilterChange(null)
+                SeverityChip("Info", selectedSeverity == LogSeverity.INFO, color = MaterialTheme.colorScheme.primary) {
+                    onSeverityFilterChange(LogSeverity.INFO)
+                }
+
+                SeverityChip("Warn", selectedSeverity == LogSeverity.WARNING, color = Color(0xFFFFB74D)) {
+                    onSeverityFilterChange(LogSeverity.WARNING)
+                }
+
+                SeverityChip("Error", selectedSeverity == LogSeverity.ERROR, color = MaterialTheme.colorScheme.error) {
+                    onSeverityFilterChange(LogSeverity.ERROR)
+                }
             }
 
-            SeverityChip("Info", selectedSeverity == LogSeverity.INFO, color = MaterialTheme.colorScheme.primary) {
-                onSeverityFilterChange(LogSeverity.INFO)
-            }
+            // Quick actions
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onToggleSearch,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.Search,
+                        contentDescription = "Search Logs",
+                        tint = if (showSearchField) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
-            SeverityChip("Warn", selectedSeverity == LogSeverity.WARNING, color = Color(0xFFFFB74D)) {
-                onSeverityFilterChange(LogSeverity.WARNING)
-            }
+                Box {
+                    IconButton(
+                        onClick = onOpenExportMenu,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Share,
+                            contentDescription = "Export Logs",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showExportMenu,
+                        onDismissRequest = onDismissExportMenu
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Copy Text to Clipboard") },
+                            onClick = onExportCopy,
+                            leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }
+                        )
 
-            SeverityChip("Error", selectedSeverity == LogSeverity.ERROR, color = MaterialTheme.colorScheme.error) {
-                onSeverityFilterChange(LogSeverity.ERROR)
+                        DropdownMenuItem(
+                            text = { Text("Share as Text File") },
+                            onClick = onExportFile,
+                            leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }
+                        )
+
+                        DropdownMenuItem(
+                            text = { Text("Share as CSV") },
+                            onClick = onExportCsv,
+                            leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null) }
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onClearLogs,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.ClearAll,
+                        contentDescription = "Clear Logs",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
         // Historical Log Pagination Card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(14.dp),
+                    .padding(PulseShiftSpacing.CardPadding),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -692,12 +807,12 @@ fun EventLogsTab(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
                     if (loadingState is HistoricalLogLoadingState.Loading) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         OutlinedButton(
                             onClick = onCancelRetrieval,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = PulseShiftShapeTokens.Control
                         ) {
                             Text("Cancel", style = MaterialTheme.typography.labelSmall)
                         }
@@ -706,7 +821,7 @@ fun EventLogsTab(
                         if (!isFinished) {
                             FilledTonalButton(
                                 onClick = { onRequestPage(nextOffset) },
-                                shape = RoundedCornerShape(10.dp)
+                                shape = PulseShiftShapeTokens.Control
                             ) {
                                 Text(if (nextOffset == 0L) "Fetch Historical" else "Load Next Page", style = MaterialTheme.typography.labelSmall)
                             }
@@ -726,7 +841,7 @@ fun EventLogsTab(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
+                    .padding(PulseShiftSpacing.ScreenHorizontal),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -738,7 +853,13 @@ fun EventLogsTab(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = PulseShiftSpacing.ScreenHorizontal,
+                    end = PulseShiftSpacing.ScreenHorizontal,
+                    top = PulseShiftSpacing.SmallGap,
+                    bottom = PulseShiftSpacing.BottomScrollPadding
+                ),
+                verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)
             ) {
                 items(logs, key = { it.id }) { item ->
                     LogMessageCard(item = item, dateFormat = dateFormat)
@@ -757,7 +878,7 @@ fun SeverityChip(
 ) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(PulseShiftShapeTokens.Control)
             .background(
                 if (selected) color.copy(alpha = 0.2f)
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -765,10 +886,10 @@ fun SeverityChip(
             .border(
                 width = 1.dp,
                 color = if (selected) color else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
+                shape = PulseShiftShapeTokens.Control
             )
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
         Text(
             text = label,
@@ -796,7 +917,7 @@ fun LogMessageCard(
     }
 
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
         ),
@@ -805,9 +926,9 @@ fun LogMessageCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(PulseShiftSpacing.RelatedControls),
             verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
         ) {
             Icon(
                 imageVector = icon,
@@ -822,10 +943,11 @@ fun LogMessageCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro)) {
                         Text(
                             text = dateFormat.format(Date(item.timestampMs)),
                             style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.outline
                         )
                         if (item.isHistorical) {
@@ -834,7 +956,7 @@ fun LogMessageCard(
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                                 color = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
+                                    .clip(PulseShiftShapeTokens.Micro)
                                     .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
                                     .padding(horizontal = 4.dp, vertical = 1.dp)
                             )
@@ -844,11 +966,12 @@ fun LogMessageCard(
                     Text(
                         text = "Msg #${item.messageId}",
                         style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.outline
                     )
                 }
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(PulseShiftSpacing.Micro))
 
                 Text(
                     text = item.messageText,

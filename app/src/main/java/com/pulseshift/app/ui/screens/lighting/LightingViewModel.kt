@@ -8,6 +8,8 @@ import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.LightingState
+import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
@@ -41,7 +43,7 @@ class LightingViewModel(
     val authState: StateFlow<com.pulseshift.app.domain.model.AuthState> = repository.authState
     val isAuthenticated: StateFlow<Boolean> = repository.isAuthenticated
 
-    private val _actionFeedback = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _actionFeedback = kotlinx.coroutines.flow.MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 8)
     val actionFeedback: SharedFlow<String> = _actionFeedback
 
     private val _isBusy = MutableStateFlow(false)
@@ -124,12 +126,22 @@ class LightingViewModel(
     fun apply1000To6000Profile() {
         viewModelScope.launch {
             _isBusy.value = true
-            val ok = repository.apply1000To6000Profile()
-            _isBusy.value = false
-            if (ok) {
-                _actionFeedback.tryEmit("1,000–6,000 RPM profile applied and saved to ESP32")
-            } else {
-                _actionFeedback.tryEmit("Failed to apply 1,000–6,000 RPM profile (check connection/auth)")
+            try {
+                when (repository.apply1000To6000Profile()) {
+                    ProfileApplyResult.PERSISTED -> {
+                        _actionFeedback.tryEmit("1,000–6,000 RPM profile applied and saved to ESP32 Flash (NVS)")
+                    }
+                    ProfileApplyResult.APPLIED_ONLY -> {
+                        _actionFeedback.tryEmit("1,000–6,000 RPM profile active in RAM only (NVS save unconfirmed)")
+                    }
+                    ProfileApplyResult.FAILED -> {
+                        _actionFeedback.tryEmit("Failed to apply 1,000–6,000 RPM profile (check connection/auth)")
+                    }
+                }
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Error applying profile: ${e.message}")
+            } finally {
+                _isBusy.value = false
             }
         }
     }
@@ -186,25 +198,45 @@ class LightingViewModel(
 
     fun applyPreset(preset: com.pulseshift.app.domain.model.Preset) {
         viewModelScope.launch {
-            repository.applyPreset(preset)
+            try {
+                repository.applyPreset(preset)
+                _actionFeedback.tryEmit("Applied preset '${preset.name}'")
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Failed to apply preset: ${e.message}")
+            }
         }
     }
 
     fun savePreset(preset: com.pulseshift.app.domain.model.Preset) {
         viewModelScope.launch {
-            repository.savePreset(preset)
+            try {
+                repository.savePreset(preset)
+                _actionFeedback.tryEmit("Saved preset '${preset.name}'")
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Failed to save preset: ${e.message}")
+            }
         }
     }
 
     fun deletePreset(id: String) {
         viewModelScope.launch {
-            repository.deletePreset(id)
+            try {
+                repository.deletePreset(id)
+                _actionFeedback.tryEmit("Preset deleted")
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Failed to delete preset: ${e.message}")
+            }
         }
     }
 
     fun restoreDefaultPresets() {
         viewModelScope.launch {
-            repository.restoreDefaultPresets()
+            try {
+                repository.restoreDefaultPresets()
+                _actionFeedback.tryEmit("Default presets restored")
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Failed to restore default presets: ${e.message}")
+            }
         }
     }
 }

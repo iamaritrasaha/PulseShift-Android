@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,30 +49,19 @@ fun HsvColorWheel(
     var currentSat by remember(selectedColor) { mutableFloatStateOf(hsv[1]) }
     var currentVal by remember(selectedColor) { mutableFloatStateOf(hsv[2]) }
 
-    val quickColors = listOf(
-        RgbColor.RacingRed,
-        RgbColor.SunsetOrange,
-        RgbColor.AmberWarning,
-        RgbColor.NeonGreen,
-        RgbColor.ElectricCyan,
-        RgbColor.DeepBlue,
-        RgbColor.BrandViolet,
-        RgbColor.PureWhite
-    )
-
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         // Interactive Circular Hue Wheel
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.size(220.dp)
+            modifier = Modifier.size(190.dp)
         ) {
             Canvas(
                 modifier = Modifier
-                    .size(200.dp)
+                    .size(170.dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { offset ->
@@ -148,7 +135,7 @@ fun HsvColorWheel(
         }
 
         // Saturation Slider
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
@@ -156,49 +143,14 @@ fun HsvColorWheel(
                 Text("Saturation", style = MaterialTheme.typography.labelMedium)
                 Text("${(currentSat * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
             }
-            Slider(
+            PulseShiftSlider(
                 value = currentSat,
                 onValueChange = {
                     currentSat = it
                     onColorChanged(RgbColor.fromHsv(currentHue, currentSat, currentVal))
                 },
-                valueRange = 0f..1f,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary
-                )
+                valueRange = 0f..1f
             )
-        }
-
-        // Quick Swatches with 48dp accessible touch targets
-        Row(
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp)
-        ) {
-            quickColors.forEach { color ->
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clickable(
-                            onClick = { onColorChanged(color) }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color(color.red, color.green, color.blue))
-                            .border(
-                                width = if (selectedColor == color) 2.5.dp else 1.dp,
-                                color = if (selectedColor == color) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                shape = CircleShape
-                            )
-                    )
-                }
-            }
         }
     }
 }

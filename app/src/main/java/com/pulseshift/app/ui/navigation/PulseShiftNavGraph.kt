@@ -1,6 +1,9 @@
 package com.pulseshift.app.ui.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -63,6 +66,7 @@ fun PulseShiftNavGraph(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (isPrimaryScreen) {
                 PulseShiftTopBar(
@@ -111,7 +115,17 @@ fun PulseShiftNavGraph(
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    // Snap transitions: the default crossfade can freeze
+                    // mid-flight when a new navigate() interrupts a running
+                    // transition, leaving two destinations composed at once and
+                    // the UI stranded on the old screen until restart. An
+                    // atomic swap has no animation to wedge and matches the
+                    // crisp automotive instrument feel.
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                    popEnterTransition = { EnterTransition.None },
+                    popExitTransition = { ExitTransition.None }
                 ) {
                     composable(Screen.Onboarding.route) {
                         OnboardingScreen(
