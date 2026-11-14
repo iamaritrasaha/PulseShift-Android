@@ -555,8 +555,8 @@ class ProtocolV2CodecTest {
         assertEquals(0xA5.toByte(), otaBegin[6])
         assertEquals(0x5C.toByte(), otaBegin[7])
 
-        // Test OTA_DATA
-        val chunkData = byteArrayOf(0xE7.toByte(), 0x01, 0x02, 0x03)
+        // Test OTA_DATA (starts with Espressif image magic 0xE9)
+        val chunkData = byteArrayOf(0xE9.toByte(), 0x01, 0x02, 0x03)
         val otaData = PulseShiftBleProtocol.buildOtaDataV2(103, 0, chunkData)
         assertEquals(6 + 7, otaData.size) // 6 header + (3 + 4) payload
         assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, otaData[1])
@@ -564,7 +564,7 @@ class ProtocolV2CodecTest {
         assertEquals(0.toByte(), otaData[6]) // chunkIdx low
         assertEquals(0.toByte(), otaData[7]) // chunkIdx high
         assertEquals(4.toByte(), otaData[8]) // dataLen
-        assertEquals(0xE7.toByte(), otaData[9])
+        assertEquals(0xE9.toByte(), otaData[9])
 
         // Test OTA_END
         val shaTail = byteArrayOf(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte(), 0xDD.toByte())

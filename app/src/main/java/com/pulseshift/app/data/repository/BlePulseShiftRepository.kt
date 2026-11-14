@@ -1980,8 +1980,8 @@ class BlePulseShiftRepository(
             return false
         }
 
-        if (imageBytes[0] != 0xE7.toByte()) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Invalid ESP32 image magic byte: 0x${"%02X".format(imageBytes[0])}. Expected 0xE7.", false)
+        if (imageBytes[0] != 0xE9.toByte()) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Invalid ESP32 image magic byte: 0x${"%02X".format(imageBytes[0])}. Expected 0xE9.", false)
             return false
         }
 
