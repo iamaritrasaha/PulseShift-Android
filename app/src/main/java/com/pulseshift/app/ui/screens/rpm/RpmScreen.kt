@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.util.Locale
 
 data class CalibrationPoint(
@@ -64,7 +67,8 @@ data class CalibrationPoint(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RpmScreen(
-    viewModel: RpmViewModel
+    viewModel: RpmViewModel,
+    onNavigateBack: () -> Unit = {}
 ) {
     val telemetry by viewModel.rpmTelemetryState.collectAsState()
     val snapshot by viewModel.configSnapshot.collectAsState()
@@ -78,6 +82,14 @@ fun RpmScreen(
         topBar = {
             TopAppBar(
                 title = { Text("RPM & Calibration") },
+                navigationIcon = {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     if (hasUnsavedChanges) {
                         FilledTonalButton(

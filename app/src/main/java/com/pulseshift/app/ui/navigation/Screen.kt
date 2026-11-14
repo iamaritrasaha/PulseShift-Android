@@ -26,6 +26,6 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector?
 
     companion object {
         val bottomNavItems: List<Screen>
-            get() = listOf(Home, Lighting, Rpm, Diagnostics, Devices)
+            get() = listOf(Home, Lighting, Presets, Diagnostics)
     }
 }

@@ -8,8 +8,8 @@ enum class WarningStyle(val id: Int, val label: String) {
 }
 
 data class ShiftLightConfig(
-    val thresholds: List<Int> = listOf(3000, 4000, 5000, 6000, 7000, 8000),
-    val warningRpm: Int = 8500,
+    val thresholds: List<Int> = listOf(1000, 2000, 3000, 4000, 5000, 6000),
+    val warningRpm: Int = 6500,
     val warningStyle: WarningStyle = WarningStyle.FLASH,
     val colors: List<RgbColor> = listOf(
         RgbColor.NeonGreen,
@@ -30,6 +30,6 @@ data class ShiftLightConfig(
         for (i in 0 until thresholds.size - 1) {
             if (thresholds[i] >= thresholds[i + 1]) return false
         }
-        return warningRpm > thresholds.last()
+        return warningRpm >= thresholds.last()
     }
 }

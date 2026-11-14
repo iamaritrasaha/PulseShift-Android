@@ -12,7 +12,7 @@ class NavigationTest {
     fun testScreenCompanionBottomNavItemsNotNull() {
         val items = Screen.bottomNavItems
         assertNotNull(items)
-        assertEquals(5, items.size)
+        assertEquals(4, items.size)
         items.forEach { screen ->
             assertNotNull("Screen in bottomNavItems must not be null", screen)
             assertNotNull("Screen route must not be null", screen.route)
@@ -36,8 +36,11 @@ class NavigationTest {
     fun testBottomNavExcludesSecondaryRoutes() {
         val routes = Screen.bottomNavItems.map { it.route }
         assertTrue(routes.contains(Screen.Home.route))
+        assertTrue(routes.contains(Screen.Lighting.route))
+        assertTrue(routes.contains(Screen.Presets.route))
+        assertTrue(routes.contains(Screen.Diagnostics.route))
         assertTrue(routes.contains(Screen.Terminal.route).not())
         assertTrue(routes.contains(Screen.Settings.route).not())
-        assertTrue(routes.contains(Screen.Presets.route).not())
+        assertTrue(routes.contains(Screen.Devices.route).not())
     }
 }

@@ -137,27 +137,45 @@ fun PulseShiftNavGraph(
             }
 
             composable(Screen.Rpm.route) {
-                RpmScreen(viewModel = rpmViewModel)
+                RpmScreen(
+                    viewModel = rpmViewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
 
             composable(Screen.Diagnostics.route) {
-                LogsScreen(viewModel = logsViewModel)
+                LogsScreen(
+                    viewModel = logsViewModel,
+                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) }
+                )
             }
 
             composable(Screen.Presets.route) {
-                PresetsScreen(viewModel = presetsViewModel)
+                PresetsScreen(
+                    viewModel = presetsViewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
 
             composable(Screen.Terminal.route) {
-                TerminalScreen(viewModel = terminalViewModel)
+                TerminalScreen(
+                    viewModel = terminalViewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
 
             composable(Screen.Devices.route) {
-                DevicesScreen(viewModel = devicesViewModel)
+                DevicesScreen(
+                    viewModel = devicesViewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
 
             composable(Screen.Settings.route) {
-                SettingsScreen(viewModel = settingsViewModel)
+                SettingsScreen(
+                    viewModel = settingsViewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
         }
     }

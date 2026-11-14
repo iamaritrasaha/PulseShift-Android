@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
@@ -36,11 +37,20 @@ import com.pulseshift.app.ui.theme.HardwareAmberWarning
 import com.pulseshift.app.ui.theme.HardwareGreenVerified
 import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
 
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.size
+import com.pulseshift.app.ui.components.StatusPill
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
+import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
+
 private val LIGHTING_TABS = listOf("Colors", "Effects", "RPM Bar", "Startup")
 
 /**
- * Lighting Studio: six-LED preview with per-tab controls. Local edits are
- * clearly marked as pending until the device ACKs and a save persists them.
+ * Lighting Studio: six-LED preview with per-tab controls.
+ * Provides distinct actions: Apply (Live RAM), Save to ESP32 (NVS), Save as Preset (Local), Restore Last Saved.
  */
 @Composable
 fun LightingScreen(
@@ -52,20 +62,29 @@ fun LightingScreen(
     val snapshot by viewModel.configSnapshot.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
     val selectedLed by viewModel.selectedLedIndex.collectAsState()
+    val isBusy by viewModel.isBusy.collectAsState()
+    val isAuthenticated by viewModel.isAuthenticated.collectAsState()
     val syncErrors = viewModel.lightingSyncError
+    val feedbackMessages = viewModel.actionFeedback
 
     var tab by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
+    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var newPresetName by remember { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
 
-    LaunchedEffect(Unit) { syncErrors.collect { snackbar.showSnackbar(it) } }
+    LaunchedEffect(Unit) {
+        syncErrors.collect { snackbar.showSnackbar(it) }
+    }
+    LaunchedEffect(Unit) {
+        feedbackMessages.collect { snackbar.showSnackbar(it) }
+    }
 
     if (confirmReset) {
         ConfirmDialog(
-            title = "Restore device defaults?",
-            text = "Lighting and decoder settings return to firmware defaults. Owner credentials are preserved. " +
-                "The change applies live on the device.",
-            confirmLabel = "Restore",
+            title = "Restore firmware defaults?",
+            text = "Lighting preferences return to firmware defaults (1,000–6,000 RPM profile). Owner credentials and CAN logs are strictly preserved. The change applies live on the device.",
+            confirmLabel = "Restore Defaults",
             onConfirm = {
                 confirmReset = false
                 viewModel.restoreControllerDefaults()
@@ -74,47 +93,128 @@ fun LightingScreen(
         )
     }
 
+    if (showSavePresetDialog) {
+        AlertDialog(
+            onDismissRequest = { showSavePresetDialog = false },
+            title = { Text("Save Current Setup as Preset") },
+            text = {
+                Column {
+                    Text(
+                        "Saves all current colors, effect, speed, brightness and RPM thresholds into your local Preset library.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
+                    OutlinedTextField(
+                        value = newPresetName,
+                        onValueChange = { newPresetName = it },
+                        label = { Text("Preset Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPresetName.isNotBlank()) {
+                            viewModel.saveCurrentSetupAsPreset(newPresetName.trim())
+                            showSavePresetDialog = false
+                            newPresetName = ""
+                        }
+                    },
+                    enabled = newPresetName.isNotBlank()
+                ) {
+                    Text("Save Preset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSavePresetDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(
+                start = PulseShiftSpacing.ScreenHorizontal,
+                end = PulseShiftSpacing.ScreenHorizontal,
+                top = PulseShiftSpacing.ScreenVertical,
+                bottom = PulseShiftSpacing.BottomScrollPadding
+            ),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
         ) {
             item {
                 Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text("Lighting Studio", style = MaterialTheme.typography.headlineMedium)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = if (unsaved) "UNSAVED (session only)" else "SAVED TO DEVICE",
-                            style = PulseShiftMonoSmall,
+                        StatusPill(
+                            text = if (unsaved) "UNSAVED (RAM ONLY)" else "PERSISTED (NVS)",
                             color = if (unsaved) HardwareAmberWarning else HardwareGreenVerified
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PulseShiftSpacing.SmallLabel))
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = snapshot?.let {
+                                "Active Rev ${it.activeRevision} · Calibration " +
+                                    if (it.calibrationVerified) "VERIFIED" else "UNVERIFIED"
+                            } ?: "Live hardware synchronized",
+                            style = PulseShiftMonoTiny,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (isAuthenticated) {
+                            StatusPill(text = "AUTHENTICATED", color = HardwareGreenVerified)
+                        } else {
+                            StatusPill(text = "AUTH REQUIRED", color = HardwareAmberWarning)
+                        }
+                    }
+                }
+            }
+
+            item {
+                Column {
+                    LedStripPreview(
+                        colors = lighting.ledColors,
+                        isPowerOn = lighting.isPowerOn,
+                        brightness = lighting.brightness,
+                        selectedIndex = selectedLed,
+                        onSelectLed = { index ->
+                            if (selectedLed == index) {
+                                viewModel.selectLed(-1) // Toggle back to all LEDs
+                            } else {
+                                viewModel.selectLed(index)
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(PulseShiftSpacing.Micro))
                     Text(
-                        text = snapshot?.let {
-                            "Device revision ${it.activeRevision} · calibration " +
-                                if (it.calibrationVerified) "VERIFIED" else "UNVERIFIED"
-                        } ?: "Waiting for config snapshot…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = if (selectedLed == -1) "Editing all 6 LEDs simultaneously · Tap an individual LED to isolate"
+                               else "Editing LED ${selectedLed + 1} individually · Tap again to select all",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
                     )
                 }
             }
 
             item {
-                LedStripPreview(
-                    colors = lighting.ledColors,
-                    isPowerOn = lighting.isPowerOn,
-                    brightness = lighting.brightness,
-                    selectedIndex = selectedLed,
-                    onSelectLed = { viewModel.selectLed(it) }
-                )
-            }
-
-            item {
-                TabRow(selectedTabIndex = tab) {
+                TabRow(
+                    selectedTabIndex = tab,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = MaterialTheme.colorScheme.primary
+                ) {
                     LIGHTING_TABS.forEachIndexed { index, title ->
                         Tab(
                             selected = tab == index,
@@ -135,24 +235,77 @@ fun LightingScreen(
             }
 
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
+                    // Primary Action: Save to ESP32 Flash (NVS)
                     Button(
                         onClick = { viewModel.saveToController() },
+                        enabled = !isBusy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        if (isBusy) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
+                            Text("Saving to ESP32…")
+                        } else {
+                            Text(
+                                if (unsaved) "Save Changes to ESP32 Flash (NVS)"
+                                else "All Changes Saved to Flash — Tap to Re-Save"
+                            )
+                        }
+                    }
+
+                    // Secondary Actions: Presets, Save as Preset, Reload, Factory Defaults
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (unsaved) "Save to ESP32 flash" else "Saved — tap to re-save") }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                newPresetName = "Custom Preset ${System.currentTimeMillis() % 1000}"
+                                showSavePresetDialog = true
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Text("Save Preset", maxLines = 1)
+                        }
                         OutlinedButton(
                             onClick = onNavigateToPresets,
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Presets") }
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Text("Presets Library", maxLines = 1)
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         OutlinedButton(
                             onClick = { viewModel.reloadFromController() },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Reload") }
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Text("Restore Saved", maxLines = 1)
+                        }
                         OutlinedButton(
                             onClick = { confirmReset = true },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Defaults") }
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Text("Firmware Defaults", maxLines = 1)
+                        }
                     }
                 }
             }

@@ -76,16 +76,25 @@ fun HsvColorWheel(
                 modifier = Modifier
                     .size(200.dp)
                     .pointerInput(Unit) {
-                        detectDragGestures { change, _ ->
-                            change.consume()
-                            val center = Offset(size.width / 2f, size.height / 2f)
-                            val touch = change.position - center
-                            var angle = Math.toDegrees(atan2(touch.y.toDouble(), touch.x.toDouble())).toFloat()
-                            if (angle < 0) angle += 360f
-                            currentHue = angle
-                            val newColor = RgbColor.fromHsv(currentHue, currentSat, currentVal)
-                            onColorChanged(newColor)
-                        }
+                        detectDragGestures(
+                            onDragStart = { offset ->
+                                val center = Offset(size.width / 2f, size.height / 2f)
+                                val touch = offset - center
+                                var angle = Math.toDegrees(atan2(touch.y.toDouble(), touch.x.toDouble())).toFloat()
+                                if (angle < 0) angle += 360f
+                                currentHue = angle
+                                onColorChanged(RgbColor.fromHsv(currentHue, currentSat, currentVal))
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val center = Offset(size.width / 2f, size.height / 2f)
+                                val touch = change.position - center
+                                var angle = Math.toDegrees(atan2(touch.y.toDouble(), touch.x.toDouble())).toFloat()
+                                if (angle < 0) angle += 360f
+                                currentHue = angle
+                                onColorChanged(RgbColor.fromHsv(currentHue, currentSat, currentVal))
+                            }
+                        )
                     }
             ) {
                 val center = Offset(size.width / 2f, size.height / 2f)
@@ -161,26 +170,34 @@ fun HsvColorWheel(
             )
         }
 
-        // Quick Swatches
+        // Quick Swatches with 48dp accessible touch targets
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 4.dp)
         ) {
             quickColors.forEach { color ->
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(color.red, color.green, color.blue))
-                        .border(
-                            width = if (selectedColor == color) 2.5.dp else 1.dp,
-                            color = if (selectedColor == color) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.2f),
-                            shape = CircleShape
-                        )
-                        .clickable { onColorChanged(color) }
-                )
+                        .size(48.dp)
+                        .clickable(
+                            onClick = { onColorChanged(color) }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color(color.red, color.green, color.blue))
+                            .border(
+                                width = if (selectedColor == color) 2.5.dp else 1.dp,
+                                color = if (selectedColor == color) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = CircleShape
+                            )
+                    )
+                }
             }
         }
     }

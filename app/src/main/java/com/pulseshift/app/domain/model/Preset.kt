@@ -7,11 +7,43 @@ data class Preset(
     val ledColors: List<RgbColor>,
     val brightness: Int = 200,
     val effectSpeed: Int = 50,
+    val ledDirection: Int = 0,
+    val startupAnimation: StartupAnimation = StartupAnimation.SWEEP,
+    val startupDurationMs: Int = 2000,
     val isCustom: Boolean = false,
-    val shiftLightConfig: ShiftLightConfig? = null
+    val shiftLightConfig: ShiftLightConfig? = null,
+    val createdAt: Long = System.currentTimeMillis()
 ) {
     companion object {
         val DefaultPresets = listOf(
+            Preset(
+                id = "preset_brand",
+                name = "PulseShift Tachometer (1k-6k)",
+                effect = EffectType.RPM_BAR,
+                ledColors = listOf(
+                    RgbColor.NeonGreen,
+                    RgbColor.NeonGreen,
+                    RgbColor.AmberWarning,
+                    RgbColor.AmberWarning,
+                    RgbColor.SunsetOrange,
+                    RgbColor.RacingRed
+                ),
+                brightness = 220,
+                effectSpeed = 50,
+                shiftLightConfig = ShiftLightConfig(
+                    thresholds = listOf(1000, 2000, 3000, 4000, 5000, 6000),
+                    warningRpm = 6500,
+                    warningStyle = WarningStyle.FLASH,
+                    colors = listOf(
+                        RgbColor.NeonGreen,
+                        RgbColor.NeonGreen,
+                        RgbColor.AmberWarning,
+                        RgbColor.AmberWarning,
+                        RgbColor.SunsetOrange,
+                        RgbColor.RacingRed
+                    )
+                )
+            ),
             Preset(
                 id = "preset_aurora",
                 name = "Aurora Borealis",
@@ -86,14 +118,6 @@ data class Preset(
                 ),
                 brightness = 200,
                 effectSpeed = 60
-            ),
-            Preset(
-                id = "preset_brand",
-                name = "PulseShift Tachometer",
-                effect = EffectType.RPM_BAR,
-                ledColors = List(6) { RgbColor.BrandViolet },
-                brightness = 220,
-                effectSpeed = 50
             )
         )
     }

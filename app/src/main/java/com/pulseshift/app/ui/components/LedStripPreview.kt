@@ -58,6 +58,7 @@ fun LedStripPreview(
             modifier = Modifier.fillMaxWidth()
         ) {
             // WS2812B Physical Mounting Rail Representation
+            val isAllSelected = selectedIndex == null || selectedIndex == -1
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -65,10 +66,15 @@ fun LedStripPreview(
                     .fillMaxWidth()
                     .height(84.dp)
                     .background(Color(0xFF18171E), RoundedCornerShape(18.dp))
+                    .border(
+                        width = if (isAllSelected) 1.5.dp else 1.dp,
+                        color = if (isAllSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(18.dp)
+                    )
                     .padding(horizontal = 12.dp)
             ) {
                 effectiveColors.forEachIndexed { index, rgb ->
-                    val isSelected = selectedIndex == index || selectedIndex == -1 // -1 = All selected
+                    val isSelected = selectedIndex == index
                     val targetColor = if (isPowerOn) {
                         val factor = (brightness / 255f).coerceIn(0.15f, 1.0f)
                         Color(

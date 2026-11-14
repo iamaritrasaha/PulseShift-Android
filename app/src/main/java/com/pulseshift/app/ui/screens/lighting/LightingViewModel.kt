@@ -38,6 +38,15 @@ class LightingViewModel(
     private val _selectedLedIndex = MutableStateFlow(-1)
     val selectedLedIndex: StateFlow<Int> = _selectedLedIndex.asStateFlow()
 
+    val authState: StateFlow<com.pulseshift.app.domain.model.AuthState> = repository.authState
+    val isAuthenticated: StateFlow<Boolean> = repository.isAuthenticated
+
+    private val _actionFeedback = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val actionFeedback: SharedFlow<String> = _actionFeedback
+
+    private val _isBusy = MutableStateFlow(false)
+    val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
+
     private var brightnessThrottleJob: Job? = null
     private var speedThrottleJob: Job? = null
     private var colorThrottleJob: Job? = null
@@ -57,7 +66,7 @@ class LightingViewModel(
     fun setColor(color: RgbColor) {
         colorThrottleJob?.cancel()
         colorThrottleJob = viewModelScope.launch {
-            delay(50)
+            delay(120) // Paced to avoid overflowing ESP32 4-slot ring buffer
             if (_selectedLedIndex.value == -1) {
                 repository.setGlobalColor(color)
             } else {
@@ -75,7 +84,7 @@ class LightingViewModel(
     fun setEffectSpeed(speed: Int) {
         speedThrottleJob?.cancel()
         speedThrottleJob = viewModelScope.launch {
-            delay(50)
+            delay(120)
             repository.setEffectSpeed(speed)
         }
     }
@@ -83,7 +92,7 @@ class LightingViewModel(
     fun setBrightness(brightness: Int) {
         brightnessThrottleJob?.cancel()
         brightnessThrottleJob = viewModelScope.launch {
-            delay(50)
+            delay(120)
             repository.setBrightness(brightness)
         }
     }
@@ -95,7 +104,6 @@ class LightingViewModel(
     }
 
     fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {
-        // Debounced: the duration slider must not send a 0x15 per drag tick.
         startupThrottleJob?.cancel()
         startupThrottleJob = viewModelScope.launch {
             delay(120)
@@ -104,13 +112,33 @@ class LightingViewModel(
     }
 
     fun updateThreshold(index: Int, newRpm: Int) {
-        // The repository echoes the value into its own state; the single-index
-        // BLE write is debounced so a drag does not flood the GATT queue.
         thresholdJobs.getOrNull(index)?.cancel()
         if (index in 0..5) {
             thresholdJobs[index] = viewModelScope.launch {
-                delay(150)
+                delay(120)
                 repository.setLedThreshold(index, newRpm)
+            }
+        }
+    }
+
+    fun apply1000To6000Profile() {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val ok = repository.apply1000To6000Profile()
+            _isBusy.value = false
+            if (ok) {
+                _actionFeedback.tryEmit("1,000–6,000 RPM profile applied and saved to ESP32")
+            } else {
+                _actionFeedback.tryEmit("Failed to apply 1,000–6,000 RPM profile (check connection/auth)")
+            }
+        }
+    }
+
+    fun saveCurrentSetupAsPreset(name: String) {
+        viewModelScope.launch {
+            val preset = repository.saveCurrentSetupAsPreset(name)
+            if (preset != null) {
+                _actionFeedback.tryEmit("Saved current setup as '${preset.name}'")
             }
         }
     }
@@ -131,11 +159,16 @@ class LightingViewModel(
         }
     }
 
-
-
     fun saveToController() {
         viewModelScope.launch {
-            repository.saveConfigurationToController()
+            _isBusy.value = true
+            val ok = repository.saveConfigurationToController()
+            _isBusy.value = false
+            if (ok) {
+                _actionFeedback.tryEmit("Configuration saved to ESP32 flash (NVS)")
+            } else {
+                _actionFeedback.tryEmit("Failed to save to ESP32 flash (check owner auth)")
+            }
         }
     }
 

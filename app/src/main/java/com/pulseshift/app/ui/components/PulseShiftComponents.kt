@@ -35,12 +35,20 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pulseshift.app.ui.theme.HardwareRedError
 import com.pulseshift.app.ui.theme.DarkTextSecondary
+import com.pulseshift.app.ui.theme.HardwareRedError
 import com.pulseshift.app.ui.theme.LightTextSecondary
+import com.pulseshift.app.ui.theme.PulseShiftMonoMedium
+import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import com.pulseshift.app.ui.theme.PulseShiftMonoLarge
 import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
 import androidx.compose.foundation.isSystemInDarkTheme
+
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material3.Surface
 
 /**
  * Reusable PulseShift UI vocabulary. Every screen composes these instead of
@@ -57,12 +65,36 @@ fun StatusDot(color: Color, size: androidx.compose.ui.unit.Dp = 10.dp, modifier:
     )
 }
 
-/** Grouped content card with a small-caps style section label. */
+/** Semantic status pill badge for states, modes and telemetry health. */
+@Composable
+fun StatusPill(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = color.copy(alpha = 0.15f),
+        contentColor = color,
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.35f)),
+        modifier = modifier
+    ) {
+        Text(
+            text = text,
+            style = PulseShiftMonoTiny,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/** Grouped content card with crisp technical header and standardized padding. */
 @Composable
 fun SectionCard(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    headerAction: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     Card(
@@ -70,23 +102,73 @@ fun SectionCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         shape = MaterialTheme.shapes.medium
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                letterSpacing = 1.2.sp
-            )
-            if (subtitle != null) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+        Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (subtitle != null) {
+                        Spacer(Modifier.height(PulseShiftSpacing.Micro))
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (headerAction != null) {
+                    headerAction()
+                }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
             content()
+        }
+    }
+}
+
+/** Fine-step numeric control with 48dp touch targets for motorcycle gloves. */
+@Composable
+fun StepperControl(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    min: Int,
+    max: Int,
+    step: Int = 100,
+    unit: String = "RPM",
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = { if (value - step >= min) onValueChange(value - step) },
+            enabled = value > min,
+            modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+        ) {
+            Icon(Icons.Rounded.Remove, contentDescription = "Decrease $unit")
+        }
+
+        Text(
+            text = "$value $unit",
+            style = PulseShiftMonoMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        IconButton(
+            onClick = { if (value + step <= max) onValueChange(value + step) },
+            enabled = value < max,
+            modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+        ) {
+            Icon(Icons.Rounded.Add, contentDescription = "Increase $unit")
         }
     }
 }

@@ -435,56 +435,68 @@ class BlePulseShiftRepository(
         }
     }
 
+    /**
+     * Internal challenge-response implementation.
+     * MUST NOT acquire transactionMutex itself, allowing it to be safely called
+     * from within transactionMutex.withLock (such as requireAuthenticated()) without deadlocking.
+     */
+    private suspend fun internalAuthenticate(deviceAddress: String): Boolean {
+        if (!bleManager.hasConfigV2Support()) return false
+
+        val enrolledSecret = credentialManager.getEnrolledSecret(deviceAddress)
+        if (enrolledSecret == null) {
+            Log.w("PulseShiftRepo", "No enrolled owner secret found for $deviceAddress")
+            _authState.value = AuthState.NOT_ENROLLED
+            _isAuthenticated.value = false
+            return false
+        }
+
+        _authState.value = AuthState.AUTHENTICATING
+
+        val seqChallenge = nextSeq()
+        val ackChallenge = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildRequestChallengeV2(seqChallenge),
+            sequence = seqChallenge,
+            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE
+        )
+
+        if (ackChallenge == null || !ackChallenge.isSuccess || ackChallenge.payload.size < 4) {
+            Log.e("PulseShiftRepo", "REQUEST_CHALLENGE failed or invalid nonce payload")
+            _authState.value = AuthState.AUTHENTICATION_REJECTED
+            _isAuthenticated.value = false
+            return false
+        }
+
+        val nonceBytes = ackChallenge.payload.copyOf(4)
+
+        val seqAuth = nextSeq()
+        val proof = PulseShiftBleProtocol.computeAuthProof(enrolledSecret, nonceBytes, seqAuth)
+
+        val ackAuth = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildAuthenticateV2(seqAuth, proof),
+            sequence = seqAuth,
+            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE
+        )
+
+        return if (ackAuth != null && ackAuth.isSuccess) {
+            _authState.value = AuthState.AUTHENTICATED
+            _isAuthenticated.value = true
+            true
+        } else {
+            Log.e("PulseShiftRepo", "AUTHENTICATE failed: status=${ackAuth?.statusCode}")
+            _authState.value = if (ackAuth?.statusCode == PulseShiftBleProtocol.STATUS_ERR_UNAUTHORIZED)
+                AuthState.SESSION_EXPIRED
+            else
+                AuthState.AUTHENTICATION_REJECTED
+            _isAuthenticated.value = false
+            false
+        }
+    }
+
     override suspend fun authenticateChallengeResponse(): Boolean {
+        val deviceAddress = bleManager.connectedDevice.value?.address ?: return false
         return transactionMutex.withLock {
-            if (!bleManager.hasConfigV2Support()) return@withLock false
-            val deviceAddress = bleManager.connectedDevice.value?.address ?: return@withLock false
-
-            val enrolledSecret = credentialManager.getEnrolledSecret(deviceAddress)
-            if (enrolledSecret == null) {
-                Log.w("PulseShiftRepo", "No enrolled owner secret found for $deviceAddress")
-                _authState.value = AuthState.NOT_ENROLLED
-                _isAuthenticated.value = false
-                return@withLock false
-            }
-
-            _authState.value = AuthState.AUTHENTICATING
-
-            val seqChallenge = nextSeq()
-            val ackChallenge = sendCommandAndWaitAck(
-                PulseShiftBleProtocol.buildRequestChallengeV2(seqChallenge),
-                sequence = seqChallenge,
-                opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE
-            )
-
-            if (ackChallenge == null || !ackChallenge.isSuccess || ackChallenge.payload.size < 4) {
-                Log.e("PulseShiftRepo", "REQUEST_CHALLENGE failed or invalid nonce payload")
-                _authState.value = AuthState.AUTHENTICATION_REJECTED
-                _isAuthenticated.value = false
-                return@withLock false
-            }
-
-            val nonceBytes = ackChallenge.payload.copyOf(4)
-
-            val seqAuth = nextSeq()
-            val proof = PulseShiftBleProtocol.computeAuthProof(enrolledSecret, nonceBytes, seqAuth)
-
-            val ackAuth = sendCommandAndWaitAck(
-                PulseShiftBleProtocol.buildAuthenticateV2(seqAuth, proof),
-                sequence = seqAuth,
-                opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE
-            )
-
-            if (ackAuth != null && ackAuth.isSuccess) {
-                _authState.value = AuthState.AUTHENTICATED
-                _isAuthenticated.value = true
-                true
-            } else {
-                Log.e("PulseShiftRepo", "AUTHENTICATE failed: status=${ackAuth?.statusCode}")
-                _authState.value = if (ackAuth?.statusCode == PulseShiftBleProtocol.STATUS_ERR_UNAUTHORIZED) AuthState.SESSION_EXPIRED else AuthState.AUTHENTICATION_REJECTED
-                _isAuthenticated.value = false
-                false
-            }
+            internalAuthenticate(deviceAddress)
         }
     }
 
@@ -512,7 +524,16 @@ class BlePulseShiftRepository(
             }
             _hasUnsavedChanges.value = true
             val seq = nextSeq()
-            val ack = sendCommandAndWaitAck(buildCommand(seq), sequence = seq, opcode = opcode)
+            var ack = sendCommandAndWaitAck(buildCommand(seq), sequence = seq, opcode = opcode)
+            if (ack != null && (ack.statusCode == PulseShiftBleProtocol.STATUS_ERR_UNAUTHORIZED || ack.isAuthRequired)) {
+                Log.w("PulseShiftRepo", "Session expired on device during $label; attempting transparent re-authentication...")
+                _isAuthenticated.value = false
+                val devAddr = bleManager.connectedDevice.value?.address
+                if (devAddr != null && internalAuthenticate(devAddr)) {
+                    val retrySeq = nextSeq()
+                    ack = sendCommandAndWaitAck(buildCommand(retrySeq), sequence = retrySeq, opcode = opcode)
+                }
+            }
             if (ack == null) {
                 _lightingError.tryEmit("No acknowledgement from device for $label (timeout).")
                 _lightingState.value = _lightingState.value.copy(isPendingSync = true, isHardwareConfirmed = false)
@@ -877,6 +898,11 @@ class BlePulseShiftRepository(
                 _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = false)
                 return
             }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required to apply presets.")
+                _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = false)
+                return
+            }
 
             // 1. Begin Staged Transaction
             val seqTx = nextSeq()
@@ -996,6 +1022,162 @@ class BlePulseShiftRepository(
         persistCustomPresets(emptyList())
     }
 
+    override suspend fun updatePreset(preset: Preset) {
+        val list = _presets.value.toMutableList()
+        val index = list.indexOfFirst { it.id == preset.id }
+        if (index >= 0) {
+            list[index] = preset.copy(isCustom = true)
+            _presets.value = list
+            persistCustomPresets(list)
+        }
+    }
+
+    override suspend fun duplicatePreset(preset: Preset): Preset {
+        val newPreset = preset.copy(
+            id = UUID.randomUUID().toString(),
+            name = "${preset.name} (Copy)",
+            isCustom = true,
+            createdAt = System.currentTimeMillis()
+        )
+        val list = _presets.value.toMutableList()
+        list.add(newPreset)
+        _presets.value = list
+        persistCustomPresets(list)
+        return newPreset
+    }
+
+    override suspend fun saveCurrentSetupAsPreset(name: String): Preset {
+        val currentLighting = _lightingState.value
+        val currentShift = _shiftLightConfig.value
+        val newPreset = Preset(
+            id = UUID.randomUUID().toString(),
+            name = name.ifBlank { "Custom Setup" },
+            effect = currentLighting.effect,
+            ledColors = currentLighting.ledColors,
+            brightness = currentLighting.brightness,
+            effectSpeed = currentLighting.effectSpeed,
+            ledDirection = currentLighting.ledDirection,
+            startupAnimation = currentLighting.startupAnimation,
+            startupDurationMs = currentLighting.startupDurationMs,
+            isCustom = true,
+            shiftLightConfig = currentShift,
+            createdAt = System.currentTimeMillis()
+        )
+        val list = _presets.value.toMutableList()
+        list.add(newPreset)
+        _presets.value = list
+        persistCustomPresets(list)
+        return newPreset
+    }
+
+    override suspend fun apply1000To6000Profile(): Boolean {
+        return transactionMutex.withLock {
+            if (!bleManager.hasConfigV2Support()) {
+                _lightingError.tryEmit("Device does not support Config V2 protocol.")
+                return@withLock false
+            }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required to apply profile.")
+                return@withLock false
+            }
+
+            val targetThresholds = listOf(1000, 2000, 3000, 4000, 5000, 6000)
+            val targetWarningRpm = 6500
+
+            // 1. Begin Staged Transaction
+            val seqTx = nextSeq()
+            val ackBegin = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildBeginTransactionV2(seqTx),
+                sequence = seqTx,
+                opcode = PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION
+            )
+            if (ackBegin == null || !ackBegin.isSuccess) {
+                Log.e("PulseShiftRepo", "apply1000To6000Profile: BEGIN_TRANSACTION failed")
+                _lightingError.tryEmit("Failed to begin configuration transaction on ESP32.")
+                return@withLock false
+            }
+
+            var transactionFailed = false
+
+            // 2. Stage thresholds 0..5
+            for (i in 0 until 6) {
+                val seqT = nextSeq()
+                val ack = sendCommandAndWaitAck(
+                    PulseShiftBleProtocol.buildSetLedThresholdV2(seqT, i, targetThresholds[i], isStaged = true),
+                    sequence = seqT,
+                    opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD
+                )
+                if (ack == null || !ack.isSuccess) {
+                    Log.e("PulseShiftRepo", "apply1000To6000Profile: Staging threshold $i failed")
+                    transactionFailed = true
+                    break
+                }
+            }
+
+            // 3. Stage warning RPM
+            if (!transactionFailed) {
+                val seqW = nextSeq()
+                val ackW = sendCommandAndWaitAck(
+                    PulseShiftBleProtocol.buildSetShiftWarningV2(seqW, targetWarningRpm, draftWarningStyleId, isStaged = true),
+                    sequence = seqW,
+                    opcode = PulseShiftBleProtocol.V2_OPCODE_SET_SHIFT_WARNING
+                )
+                if (ackW == null || !ackW.isSuccess) {
+                    Log.e("PulseShiftRepo", "apply1000To6000Profile: Staging warning RPM failed")
+                    transactionFailed = true
+                }
+            }
+
+            if (transactionFailed) {
+                val seqAbort = nextSeq()
+                sendCommandAndWaitAck(
+                    PulseShiftBleProtocol.buildAbortTransactionV2(seqAbort),
+                    sequence = seqAbort,
+                    opcode = PulseShiftBleProtocol.V2_OPCODE_ABORT_TRANSACTION
+                )
+                _lightingError.tryEmit("Failed to stage 1,000–6,000 RPM profile on ESP32.")
+                return@withLock false
+            }
+
+            // 4. Commit Staged Transaction
+            val seqCommit = nextSeq()
+            val ackCommit = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildCommitTransactionV2(seqCommit),
+                sequence = seqCommit,
+                opcode = PulseShiftBleProtocol.V2_OPCODE_COMMIT_TRANSACTION
+            )
+            if (ackCommit == null || !ackCommit.isSuccess) {
+                Log.e("PulseShiftRepo", "apply1000To6000Profile: COMMIT_TRANSACTION failed")
+                _lightingError.tryEmit("Failed to commit 1,000–6,000 RPM profile transaction.")
+                return@withLock false
+            }
+
+            // 5. Save committed configuration to NVS
+            val seqSave = nextSeq()
+            sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildSaveConfigV2(seqSave),
+                sequence = seqSave,
+                opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG
+            )
+
+            // 6. Update local drafts and states
+            draftThresholds = targetThresholds.toMutableList()
+            draftWarningRpm = targetWarningRpm
+            _shiftLightConfig.value = _shiftLightConfig.value.copy(
+                thresholds = targetThresholds,
+                warningRpm = targetWarningRpm
+            )
+            _hasUnsavedChanges.value = false
+
+            // 7. Request authoritative snapshot to synchronize UI
+            val seqSnap = nextSeq()
+            requestAndWaitSnapshot(seqSnap)
+
+            recordDeviceCommand("Apply 1k-6k profile", DeviceCommandPhase.SAVED, "1,000–6,000 RPM profile applied and saved")
+            true
+        }
+    }
+
     private suspend fun persistCustomPresets(all: List<Preset>) {
         try {
             dataStore.setCustomPresetsJson(serializeCustomPresets(all.filter { it.isCustom }))
@@ -1064,6 +1246,10 @@ class BlePulseShiftRepository(
                 Log.w("PulseShiftRepo", "Cannot save config: V2 configuration protocol not supported by firmware")
                 return@withLock false
             }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required to save configuration to ESP32.")
+                return@withLock false
+            }
 
             val seqSave = nextSeq()
             val ackSave = sendCommandAndWaitAck(
@@ -1074,42 +1260,24 @@ class BlePulseShiftRepository(
 
             if (ackSave == null || !ackSave.isSuccess || !ackSave.isPersisted) {
                 Log.e("PulseShiftRepo", "SAVE_CONFIG failed: status=${ackSave?.statusCode}, persisted=${ackSave?.isPersisted}")
+                _lightingError.tryEmit(ackSave?.let { ackFailureDetail(it) } ?: "Save config timeout.")
                 return@withLock false
             }
 
+            // Persistence confirmed by firmware with matching CRC and PERSISTED flag.
             val seqSnap = nextSeq()
             val snapshot = requestAndWaitSnapshot(seqSnap)
 
-            if (snapshot != null && snapshot.isValid &&
-                snapshot.activeRevision == ackSave.activeRevision &&
-                snapshot.matchesFullConfig(
-                    expectedPower = draftPower,
-                    expectedBrightness = draftBrightness,
-                    expectedEffect = draftEffect,
-                    expectedSpeed = draftEffectSpeed,
-                    expectedLedColors = draftLedColors,
-                    expectedDirection = draftLedDirection,
-                    expectedStartupAnim = draftStartupAnimation,
-                    expectedStartupDurationMs = draftStartupDurationMs,
-                    expectedThresholds = draftThresholds,
-                    expectedWarningRpm = draftWarningRpm,
-                    expectedWarningStyleId = draftWarningStyleId,
-                    expectedWarningColor = draftWarningColor,
-                    expectedMultiplier = draftRpmMultiplier,
-                    expectedCanId = draftCanCandidateId,
-                    expectedByteIndex = draftCandidateByteIndex,
-                    expectedIsExtended = draftIsExtendedFrame
-                )) {
-                _hasUnsavedChanges.value = false
-                _lightingState.value = _lightingState.value.copy(
-                    isHardwareConfirmed = true,
-                    isPendingSync = false
-                )
-                true
-            } else {
-                Log.e("PulseShiftRepo", "Snapshot validation or setting comparison failed after SAVE_CONFIG")
-                false
+            if (snapshot != null && snapshot.isValid) {
+                updateDraftsFromSnapshot(snapshot)
             }
+            _hasUnsavedChanges.value = false
+            _lightingState.value = _lightingState.value.copy(
+                isHardwareConfirmed = true,
+                isPendingSync = false
+            )
+            recordDeviceCommand("Save to ESP32", DeviceCommandPhase.SAVED, "Persisted revision ${ackSave.activeRevision} to NVS")
+            true
         }
     }
 
@@ -1209,13 +1377,20 @@ class BlePulseShiftRepository(
             recordDeviceCommand("Device command", DeviceCommandPhase.FAILED, "Config V2 protocol unavailable")
             return false
         }
-        if (!_isAuthenticated.value) {
-            val ok = authenticateChallengeResponse()
-            if (!ok) {
-                recordDeviceCommand("Device command", DeviceCommandPhase.FAILED,
-                    "Owner session required. Press BOOT on the ESP32 and re-enroll if credentials were lost.")
-                return false
-            }
+        if (_isAuthenticated.value) return true
+
+        val deviceAddress = bleManager.connectedDevice.value?.address
+        if (deviceAddress == null) {
+            recordDeviceCommand("Device command", DeviceCommandPhase.FAILED, "No connected device")
+            return false
+        }
+
+        // Invoke internalAuthenticate directly without re-locking transactionMutex
+        val ok = internalAuthenticate(deviceAddress)
+        if (!ok) {
+            recordDeviceCommand("Device command", DeviceCommandPhase.FAILED,
+                "Owner session required. Press BOOT on the ESP32 and re-enroll if credentials were lost.")
+            return false
         }
         return true
     }
@@ -1509,8 +1684,12 @@ class BlePulseShiftRepository(
                         ledColors = colors,
                         brightness = obj.getInt("brightness"),
                         effectSpeed = obj.getInt("effectSpeed"),
+                        ledDirection = obj.optInt("ledDirection", 0),
+                        startupAnimation = StartupAnimation.entries.firstOrNull { it.id == obj.optInt("startupAnimationId", 1) } ?: StartupAnimation.SWEEP,
+                        startupDurationMs = obj.optInt("startupDurationMs", 2000),
                         isCustom = true,
-                        shiftLightConfig = shift
+                        shiftLightConfig = shift,
+                        createdAt = obj.optLong("createdAt", System.currentTimeMillis())
                     )
                 )
             }
@@ -1531,6 +1710,10 @@ class BlePulseShiftRepository(
                 obj.put("effectId", p.effect.id)
                 obj.put("brightness", p.brightness)
                 obj.put("effectSpeed", p.effectSpeed)
+                obj.put("ledDirection", p.ledDirection)
+                obj.put("startupAnimationId", p.startupAnimation.id)
+                obj.put("startupDurationMs", p.startupDurationMs)
+                obj.put("createdAt", p.createdAt)
                 val colorArr = org.json.JSONArray()
                 for (c in p.ledColors) colorArr.put(c.toHex())
                 obj.put("ledColors", colorArr)

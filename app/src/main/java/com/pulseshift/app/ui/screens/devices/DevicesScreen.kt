@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothConnected
@@ -52,11 +53,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevicesScreen(
-    viewModel: DevicesViewModel
+    viewModel: DevicesViewModel,
+    onNavigateBack: () -> Unit = {}
 ) {
     val connectionState by viewModel.connectionState.collectAsState()
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
@@ -71,11 +74,22 @@ fun DevicesScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Hardware & Bluetooth", style = MaterialTheme.typography.titleLarge) },
+                navigationIcon = {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     if (connectionState == BleConnectionState.SCANNING) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                     } else {
-                        IconButton(onClick = { viewModel.startScan() }) {
+                        IconButton(
+                            onClick = { viewModel.startScan() },
+                            modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+                        ) {
                             Icon(Icons.Rounded.Refresh, contentDescription = "Scan for ESP32")
                         }
                     }
@@ -88,8 +102,8 @@ fun DevicesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.SmallLabel),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
         ) {
             // Hardware Bluetooth Connection State Pipeline Banner
             item {

@@ -71,8 +71,14 @@ interface PulseShiftRepository {
     // Presets
     suspend fun applyPreset(preset: Preset)
     suspend fun savePreset(preset: Preset)
+    suspend fun updatePreset(preset: Preset)
+    suspend fun duplicatePreset(preset: Preset): Preset?
+    suspend fun saveCurrentSetupAsPreset(name: String): Preset?
     suspend fun deletePreset(id: String)
     suspend fun restoreDefaultPresets()
+
+    // Rapid Profile Application
+    suspend fun apply1000To6000Profile(): Boolean
 
     // Transactions & Non-Volatile Persistence
     suspend fun saveConfigurationToController(): Boolean

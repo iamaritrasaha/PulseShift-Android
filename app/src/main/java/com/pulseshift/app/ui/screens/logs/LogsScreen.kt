@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -85,7 +86,8 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogsScreen(
-    viewModel: LogsViewModel
+    viewModel: LogsViewModel,
+    onNavigateToTerminal: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -115,6 +117,9 @@ fun LogsScreen(
             TopAppBar(
                 title = { Text("Diagnostics & System Health", style = MaterialTheme.typography.titleLarge) },
                 actions = {
+                    IconButton(onClick = onNavigateToTerminal) {
+                        Icon(Icons.Rounded.Terminal, contentDescription = "Open Hardware Terminal")
+                    }
                     if (selectedTab == 1) {
                         IconButton(onClick = { showSearchField = !showSearchField }) {
                             Icon(Icons.Rounded.Search, contentDescription = "Search Logs")
