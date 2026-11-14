@@ -33,17 +33,17 @@ class ProtocolCodecTest {
     @Test
     fun `set capture stage encodes opcode 0x54 with one payload byte`() {
         val frame = PulseShiftBleProtocol.buildSetCaptureStageV2(42, 2)
-        assertEquals(0x02, frame[0])
-        assertEquals(0x54.toByte(), frame[1])
+        assertEquals(0x02, frame[0].toInt() and 0xFF)
+        assertEquals(0x54, frame[1].toInt() and 0xFF)
         assertEquals(42, (frame[2].toInt() and 0xFF) or ((frame[3].toInt() and 0xFF) shl 8))
         assertEquals(1, frame[4].toInt())
-        assertEquals(2, frame[5].toInt() and 0xFF)
+        assertEquals(2, frame[6].toInt() and 0xFF) // payload starts at byte 6
     }
 
     @Test
-    fun `set capture stage clamps stage to the valid 1..3 range`() {
-        assertEquals(1, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 0)[5].toInt())
-        assertEquals(3, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 4)[5].toInt())
+    fun `set capture stage clamps stage to the valid 1 to 3 range`() {
+        assertEquals(1, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 0)[6].toInt())
+        assertEquals(3, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 4)[6].toInt())
     }
 
     @Test
@@ -83,18 +83,17 @@ class ProtocolCodecTest {
         val caps = PulseShiftBleProtocol.parseCapabilitiesV2(
             byteArrayOf(
                 0x02, 6,
-                0x80.toByte(), 0x01, 0x00, 0x00, // featureMask = 0x180
+                0x00, 0x80.toByte(), 0x00, 0x00, // featureMask = 0x8000 (bit 15)
                 0, 0, 0, 0, 0, 2
             )
         )
-        // 0x180 alone: capture stage bit set, bench test not.
         assertTrue(caps!!.supportsCaptureStage)
         assertFalse(caps.supportsLedBenchTest)
 
         val both = PulseShiftBleProtocol.parseCapabilitiesV2(
             byteArrayOf(
                 0x02, 6,
-                0x80.toByte(), 0x01, 0x01, 0x00, // featureMask = 0x10180
+                0x00, 0x80.toByte(), 0x01, 0x00, // featureMask = 0x18000 (bits 15+16)
                 0, 0, 0, 0, 0, 2
             )
         )

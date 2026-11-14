@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector? = null) {
@@ -18,9 +19,9 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector?
     data object Diagnostics : Screen("diagnostics", "Diagnostics", Icons.AutoMirrored.Rounded.ListAlt)
     data object Devices : Screen("devices", "Devices", Icons.Rounded.Bluetooth)
 
-    // Secondary Sub-routes
+    // Secondary sub-routes (reachable from Home quick actions and in-screen links)
     data object Presets : Screen("presets", "Presets", Icons.Rounded.Bookmarks)
-    data object Logs : Screen("logs", "Logs", Icons.AutoMirrored.Rounded.ListAlt)
+    data object Terminal : Screen("terminal", "Terminal", Icons.Rounded.Terminal)
     data object Settings : Screen("settings", "Settings", Icons.Rounded.Settings)
 
     companion object {

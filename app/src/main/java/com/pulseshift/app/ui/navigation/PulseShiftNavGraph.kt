@@ -33,6 +33,8 @@ import com.pulseshift.app.ui.screens.rpm.RpmScreen
 import com.pulseshift.app.ui.screens.rpm.RpmViewModel
 import com.pulseshift.app.ui.screens.settings.SettingsScreen
 import com.pulseshift.app.ui.screens.settings.SettingsViewModel
+import com.pulseshift.app.ui.screens.terminal.TerminalScreen
+import com.pulseshift.app.ui.screens.terminal.TerminalViewModel
 
 @Composable
 fun PulseShiftNavGraph(
@@ -45,6 +47,7 @@ fun PulseShiftNavGraph(
     logsViewModel: LogsViewModel,
     devicesViewModel: DevicesViewModel,
     settingsViewModel: SettingsViewModel,
+    terminalViewModel: TerminalViewModel,
     onCompleteOnboarding: () -> Unit
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -119,12 +122,18 @@ fun PulseShiftNavGraph(
                     viewModel = homeViewModel,
                     onNavigateToLighting = { navController.navigate(Screen.Lighting.route) },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToDevices = { navController.navigate(Screen.Devices.route) }
+                    onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
+                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
+                    onNavigateToPresets = { navController.navigate(Screen.Presets.route) },
+                    onNavigateToRpm = { navController.navigate(Screen.Rpm.route) }
                 )
             }
 
             composable(Screen.Lighting.route) {
-                LightingScreen(viewModel = lightingViewModel)
+                LightingScreen(
+                    viewModel = lightingViewModel,
+                    onNavigateToPresets = { navController.navigate(Screen.Presets.route) }
+                )
             }
 
             composable(Screen.Rpm.route) {
@@ -139,8 +148,8 @@ fun PulseShiftNavGraph(
                 PresetsScreen(viewModel = presetsViewModel)
             }
 
-            composable(Screen.Logs.route) {
-                LogsScreen(viewModel = logsViewModel)
+            composable(Screen.Terminal.route) {
+                TerminalScreen(viewModel = terminalViewModel)
             }
 
             composable(Screen.Devices.route) {

@@ -9,7 +9,12 @@ data class LightingState(
     val ledColors: List<RgbColor> = List(6) { RgbColor.BrandViolet },
     val isShiftLightActive: Boolean = false,
     val isPendingSync: Boolean = false,
-    val isHardwareConfirmed: Boolean = false
+    val isHardwareConfirmed: Boolean = false,
+    // Direction and startup configuration live in the same unified state as
+    // everything else so no screen reads a second, drifting source.
+    val ledDirection: Int = 0, // 0 = forward, 1 = reversed
+    val startupAnimation: StartupAnimation = StartupAnimation.SWEEP,
+    val startupDurationMs: Int = 2000
 ) {
     init {
         require(brightness in 0..255) { "Brightness must be 0-255" }
@@ -19,4 +24,7 @@ data class LightingState(
 
     val brightnessPercent: Int
         get() = ((brightness / 255f) * 100).toInt()
+
+    val isDirectionReversed: Boolean
+        get() = ledDirection == 1
 }

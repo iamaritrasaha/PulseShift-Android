@@ -30,7 +30,8 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        // Permissions handled gracefully; Demo Mode remains active if denied
+        // Denials surface through the BLE manager's PERMISSION_REQUIRED state
+        // and the Devices screen explains what to grant; no demo mode exists.
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,35 +54,38 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            PulseShiftTheme(darkTheme = isDarkTheme, dynamicColor = dynamicColor) {
-                val homeViewModel: HomeViewModel = viewModel { HomeViewModel(app.repository) }
-                val lightingViewModel: LightingViewModel = viewModel { LightingViewModel(app.repository) }
-                val rpmViewModel: com.pulseshift.app.ui.screens.rpm.RpmViewModel = viewModel { com.pulseshift.app.ui.screens.rpm.RpmViewModel(app.repository) }
-                val presetsViewModel: PresetsViewModel = viewModel { PresetsViewModel(app.repository) }
-                val logsViewModel: LogsViewModel = viewModel { LogsViewModel(app.repository) }
-                val devicesViewModel: DevicesViewModel = viewModel { DevicesViewModel(app.bleManager, app.repository) }
-                val settingsViewModel: SettingsViewModel = viewModel { SettingsViewModel(app.dataStore, app.repository) }
+                PulseShiftTheme(darkTheme = isDarkTheme, dynamicColor = dynamicColor) {
+                    val homeViewModel: HomeViewModel = viewModel { HomeViewModel(app.repository) }
+                    val lightingViewModel: LightingViewModel = viewModel { LightingViewModel(app.repository) }
+                    val rpmViewModel: com.pulseshift.app.ui.screens.rpm.RpmViewModel = viewModel { com.pulseshift.app.ui.screens.rpm.RpmViewModel(app.repository) }
+                    val presetsViewModel: PresetsViewModel = viewModel { PresetsViewModel(app.repository) }
+                    val logsViewModel: LogsViewModel = viewModel { LogsViewModel(app.repository) }
+                    val devicesViewModel: DevicesViewModel = viewModel { DevicesViewModel(app.bleManager, app.repository) }
+                    val settingsViewModel: SettingsViewModel = viewModel { SettingsViewModel(app.dataStore, app.repository) }
+                    val terminalViewModel: com.pulseshift.app.ui.screens.terminal.TerminalViewModel =
+                        viewModel { com.pulseshift.app.ui.screens.terminal.TerminalViewModel(app.bleManager, app.repository) }
 
-                isOnboardingCompleted?.let { completed ->
-                    val startDest = if (completed) Screen.Home.route else Screen.Onboarding.route
+                    isOnboardingCompleted?.let { completed ->
+                        val startDest = if (completed) Screen.Home.route else Screen.Onboarding.route
 
-                    PulseShiftNavGraph(
-                        startDestination = startDest,
-                        homeViewModel = homeViewModel,
-                        lightingViewModel = lightingViewModel,
-                        rpmViewModel = rpmViewModel,
-                        presetsViewModel = presetsViewModel,
-                        logsViewModel = logsViewModel,
-                        devicesViewModel = devicesViewModel,
-                        settingsViewModel = settingsViewModel,
-                        onCompleteOnboarding = {
-                            scope.launch {
-                                app.dataStore.setOnboardingCompleted(true)
+                        PulseShiftNavGraph(
+                            startDestination = startDest,
+                            homeViewModel = homeViewModel,
+                            lightingViewModel = lightingViewModel,
+                            rpmViewModel = rpmViewModel,
+                            presetsViewModel = presetsViewModel,
+                            logsViewModel = logsViewModel,
+                            devicesViewModel = devicesViewModel,
+                            settingsViewModel = settingsViewModel,
+                            terminalViewModel = terminalViewModel,
+                            onCompleteOnboarding = {
+                                scope.launch {
+                                    app.dataStore.setOnboardingCompleted(true)
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
-            }
         }
     }
 

@@ -26,8 +26,18 @@ class NavigationTest {
         assertEquals("home", Screen.Home.route)
         assertEquals("lighting", Screen.Lighting.route)
         assertEquals("presets", Screen.Presets.route)
-        assertEquals("logs", Screen.Logs.route)
+        assertEquals("terminal", Screen.Terminal.route)
+        assertEquals("diagnostics", Screen.Diagnostics.route)
         assertEquals("devices", Screen.Devices.route)
         assertEquals("settings", Screen.Settings.route)
+    }
+
+    @Test
+    fun testBottomNavExcludesSecondaryRoutes() {
+        val routes = Screen.bottomNavItems.map { it.route }
+        assertTrue(routes.contains(Screen.Home.route))
+        assertTrue(routes.contains(Screen.Terminal.route).not())
+        assertTrue(routes.contains(Screen.Settings.route).not())
+        assertTrue(routes.contains(Screen.Presets.route).not())
     }
 }

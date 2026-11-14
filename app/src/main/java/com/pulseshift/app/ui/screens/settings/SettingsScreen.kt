@@ -151,8 +151,15 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("PulseShift v1.0.0", style = MaterialTheme.typography.bodyLarge)
-                        Text("PulseShift BLE Config V2 Protocol · 2025 Pulsar NS125 ABS", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "PulseShift v${com.pulseshift.app.BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            "BLE Config V2 protocol · target vehicle: Bajaj Pulsar NS125",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Icon(Icons.Rounded.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 }

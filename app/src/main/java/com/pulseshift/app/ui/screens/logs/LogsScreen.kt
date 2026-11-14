@@ -104,7 +104,6 @@ fun LogsScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showSearchField by remember { mutableStateOf(false) }
     var showExportMenu by remember { mutableStateOf(false) }
-    var nextHistoricalOffset by remember { mutableLongStateOf(0L) }
     var showRestartConfirm by remember { mutableStateOf(false) }
     var showClearDiagConfirm by remember { mutableStateOf(false) }
 
@@ -209,7 +208,7 @@ fun LogsScreen(
                     searchQuery = searchQuery,
                     showSearchField = showSearchField,
                     selectedSeverity = selectedSeverity,
-                    nextHistoricalOffset = nextHistoricalOffset,
+                    nextHistoricalOffset = 0L,
                     dateFormat = dateFormat,
                     onSearchQueryChange = { viewModel.setSearchQuery(it) },
                     onSeverityFilterChange = { viewModel.setSeverityFilter(it) },
@@ -574,7 +573,11 @@ fun EventLogsTab(
     onRequestPage: (Long) -> Unit,
     onCancelRetrieval: () -> Unit
 ) {
-    var nextOffset by remember { mutableLongStateOf(nextHistoricalOffset) }
+    // Single source of truth: the loading state machine carries the cursor.
+    val nextOffset = when (val s = loadingState) {
+        is HistoricalLogLoadingState.PageLoaded -> s.nextOffset
+        else -> nextHistoricalOffset
+    }
 
     Column(
         modifier = Modifier
@@ -648,7 +651,6 @@ fun EventLogsTab(
                             Text("Fetching page at offset ${loadingState.requestedOffset} bytes...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
                         is HistoricalLogLoadingState.PageLoaded -> {
-                            nextOffset = loadingState.nextOffset
                             if (loadingState.isFinished) {
                                 Text("All historical flash log pages retrieved (End of log)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                             } else {

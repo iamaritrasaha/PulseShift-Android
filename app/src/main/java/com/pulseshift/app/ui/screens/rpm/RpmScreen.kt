@@ -250,15 +250,24 @@ fun BasicRpmView(
                 Text("Current Active Decoder Parameters", style = MaterialTheme.typography.titleSmall)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("CAN Candidate ID", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("0x${(snapshot?.canCandidateId ?: 0x301L).toString(16).uppercase()}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        snapshot?.let { "0x${it.canCandidateId.toString(16).uppercase()}" } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold
+                    )
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Byte Index", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("${snapshot?.candidateByteIndex ?: 0}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        snapshot?.let { "${it.candidateByteIndex}" } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold
+                    )
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("RPM Multiplier", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("${snapshot?.rpmMultiplier ?: 40.0f}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        snapshot?.let { "${it.rpmMultiplier}" } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -450,10 +459,13 @@ fun AdvancedCalibrationView(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Multi-Point Calibration Measurement Workflow", style = MaterialTheme.typography.titleMedium)
+                Text("Experimental: Phone-Side Ratio Calculator", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Collect multiple steady-state measurement pairs across idle, mid, and high RPM to check linearity and compute a calibrated conversion multiplier.",
-                    style = MaterialTheme.typography.bodySmall
+                    "A notebook helper for comparing raw readings against an external reference. It computes a mean " +
+                        "ratio for the decoder fields above — applying it is a decoder change and INVALIDATES any verified " +
+                        "calibration. Prefer the firmware-driven workflow below, which binds verification on the device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Row(

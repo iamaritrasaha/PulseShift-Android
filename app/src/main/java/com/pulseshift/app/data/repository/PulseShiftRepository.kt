@@ -31,6 +31,11 @@ interface PulseShiftRepository {
     val hasUnsavedChanges: StateFlow<Boolean>
     val lastAckResponse: SharedFlow<ConfigAckResponse>
 
+    // Transport state (wrapped from the BLE manager so screens have one source)
+    val connectionState: StateFlow<com.pulseshift.app.data.ble.BleConnectionState>
+    val connectionError: StateFlow<String?>
+    val isReconnecting: StateFlow<Boolean>
+
     /** Failures of live lighting writes (ACK timeouts, rejections, auth). */
     val lightingSyncError: SharedFlow<String>
 
@@ -58,6 +63,8 @@ interface PulseShiftRepository {
     suspend fun setLedDirection(direction: Int)
     suspend fun setWarningRgb(color: RgbColor)
     suspend fun updateShiftLightConfig(config: ShiftLightConfig)
+    /** Write ONE LED threshold (opcode 0x16) with ACK verification. */
+    suspend fun setLedThreshold(index: Int, rpm: Int)
     suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float)
     suspend fun setRpmHysteresis(hysteresisRpm: Int)
 

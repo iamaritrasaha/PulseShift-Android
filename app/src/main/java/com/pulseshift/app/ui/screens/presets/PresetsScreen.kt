@@ -63,6 +63,7 @@ fun PresetsScreen(
     var showCreateSheet by remember { mutableStateOf(false) }
     var presetNameInput by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
+    var confirmDeletePreset by remember { mutableStateOf<Preset?>(null) }
 
     Scaffold(
         topBar = {
@@ -100,10 +101,24 @@ fun PresetsScreen(
                     preset = preset,
                     onApply = { viewModel.applyPreset(preset) },
                     onDuplicate = { viewModel.duplicatePreset(preset) },
-                    onDelete = if (preset.isCustom) { { viewModel.deletePreset(preset.id) } } else null
+                    onDelete = if (preset.isCustom) { { confirmDeletePreset = preset } } else null
                 )
             }
         }
+    }
+
+    // Delete confirmation: preset deletion is irreversible.
+    confirmDeletePreset?.let { target ->
+        com.pulseshift.app.ui.components.ConfirmDialog(
+            title = "Delete \"${target.name}\"?",
+            text = "This removes the phone-stored preset permanently. Device settings are not touched.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                viewModel.deletePreset(target.id)
+                confirmDeletePreset = null
+            },
+            onDismiss = { confirmDeletePreset = null }
+        )
     }
 
     // Restore Defaults Dialog

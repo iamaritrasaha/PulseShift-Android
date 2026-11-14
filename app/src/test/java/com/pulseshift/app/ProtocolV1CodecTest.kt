@@ -5,6 +5,10 @@ import com.pulseshift.app.data.ble.GattOp
 import com.pulseshift.app.data.ble.PulseShiftBleProtocol
 import com.pulseshift.app.domain.model.LogSeverity
 import com.pulseshift.app.domain.model.RpmStatusFlags
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -171,7 +175,9 @@ class ProtocolV1CodecTest {
     @Test
     fun testDiagnosticSeverityParsingErrorClassification() {
         val reassembler = DiagnosticLogReassembler()
-        val text = "CAN bus ERROR detected"
+        // Max 14 bytes per chunk (BLE_LOG_CHUNK payload limit); "BUS ERROR!"
+        // classifies as ERROR via both the error flag and the text match.
+        val text = "BUS ERROR!"
         val payload = text.toByteArray(Charsets.UTF_8)
         val packet = ByteArray(6 + payload.size)
         packet[0] = 1
@@ -182,11 +188,20 @@ class ProtocolV1CodecTest {
         packet[5] = payload.size.toByte()
         System.arraycopy(payload, 0, packet, 6, payload.size)
 
-        reassembler.processChunkBytes(packet)
-        // The completed message must actually arrive and classify as ERROR;
-        // an empty replay cache is a failure, not a pass.
-        val emitted = reassembler.completedMessages.replayCache.lastOrNull()
-        assertNotNull("Reassembler must emit the completed single-chunk message", emitted)
-        assertEquals(LogSeverity.ERROR, emitted!!.severity)
+        // Collect on the live flow: completedMessages has no replay buffer.
+        // The Unconfined collector's resumption is queued on runBlocking's
+        // event loop; yield() drains it before asserting.
+        val received = runBlocking {
+            val collected = mutableListOf<com.pulseshift.app.domain.model.DiagnosticLogMessage>()
+            val collector = launch(Dispatchers.Unconfined) {
+                reassembler.completedMessages.collect { collected.add(it) }
+            }
+            reassembler.processChunkBytes(packet)
+            yield()
+            collector.cancel()
+            collected
+        }
+        assertEquals("Single first+final chunk must complete immediately", 1, received.size)
+        assertEquals(LogSeverity.ERROR, received.first().severity)
     }
 }

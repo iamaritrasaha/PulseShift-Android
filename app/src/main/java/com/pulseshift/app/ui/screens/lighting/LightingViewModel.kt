@@ -29,6 +29,7 @@ class LightingViewModel(
     val configSnapshot: StateFlow<ConfigSnapshot?> = repository.configSnapshot
     val hasUnsavedChanges: StateFlow<Boolean> = repository.hasUnsavedChanges
     val lastAckResponse: SharedFlow<ConfigAckResponse> = repository.lastAckResponse
+    val lightingSyncError: SharedFlow<String> = repository.lightingSyncError
     val rpmTelemetryState: StateFlow<RpmTelemetryState?> = repository.rpmTelemetryState
     val connectedDevice: StateFlow<BleDevice?> = repository.connectedDevice
     val presets: StateFlow<List<com.pulseshift.app.domain.model.Preset>> = repository.presets
@@ -40,6 +41,8 @@ class LightingViewModel(
     private var brightnessThrottleJob: Job? = null
     private var speedThrottleJob: Job? = null
     private var colorThrottleJob: Job? = null
+    private var startupThrottleJob: Job? = null
+    private val thresholdJobs = Array<Job?>(6) { null }
 
     fun selectLed(index: Int) {
         _selectedLedIndex.value = index
@@ -92,18 +95,22 @@ class LightingViewModel(
     }
 
     fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {
-        viewModelScope.launch {
+        // Debounced: the duration slider must not send a 0x15 per drag tick.
+        startupThrottleJob?.cancel()
+        startupThrottleJob = viewModelScope.launch {
+            delay(120)
             repository.setStartupAnimation(animation, durationMs)
         }
     }
 
     fun updateThreshold(index: Int, newRpm: Int) {
-        val currentThresholds = shiftLightConfig.value.thresholds.toMutableList()
+        // The repository echoes the value into its own state; the single-index
+        // BLE write is debounced so a drag does not flood the GATT queue.
+        thresholdJobs.getOrNull(index)?.cancel()
         if (index in 0..5) {
-            currentThresholds[index] = newRpm
-            val updated = shiftLightConfig.value.copy(thresholds = currentThresholds)
-            viewModelScope.launch {
-                repository.updateShiftLightConfig(updated)
+            thresholdJobs[index] = viewModelScope.launch {
+                delay(150)
+                repository.setLedThreshold(index, newRpm)
             }
         }
     }

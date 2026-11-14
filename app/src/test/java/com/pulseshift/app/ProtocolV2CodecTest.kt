@@ -231,11 +231,15 @@ class ProtocolV2CodecTest {
     }
 
     @Test
-    fun testV1CapabilitiesNotAdvertisedAsV2() {
-        val v1Caps = DeviceCapabilities.fromBitmask(0x004F)
-        assertFalse(v1Caps.hasConfigV2Support)
-        assertFalse(v1Caps.supportsMultiplier)
-        assertFalse(v1Caps.supportsCandidateSource)
+    fun testTransportOnlyCapabilitiesAreNotV2() {
+        // A pre-snapshot placeholder (no capabilities characteristic read yet)
+        // must never claim V2 support or feature flags.
+        val placeholder = DeviceCapabilities(hasConfigV2Support = false)
+        assertFalse(placeholder.hasConfigV2Support)
+        assertFalse(placeholder.supportsMultiplier)
+        assertFalse(placeholder.supportsCandidateSource)
+        assertFalse(placeholder.supportsCaptureStage)
+        assertFalse(placeholder.supportsLedBenchTest)
     }
 
     @Test

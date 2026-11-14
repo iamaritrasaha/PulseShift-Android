@@ -76,6 +76,10 @@ class BlePulseShiftRepository(
 
     override val connectedDevice: StateFlow<BleDevice?> = bleManager.connectedDevice
 
+    override val connectionState: StateFlow<com.pulseshift.app.data.ble.BleConnectionState> = bleManager.connectionState
+    override val connectionError: StateFlow<String?> = bleManager.connectionError
+    override val isReconnecting: StateFlow<Boolean> = bleManager.isReconnecting
+
     private val _presets = MutableStateFlow<List<Preset>>(Preset.DefaultPresets)
     override val presets: StateFlow<List<Preset>> = _presets.asStateFlow()
 
@@ -259,7 +263,10 @@ class BlePulseShiftRepository(
                             globalColor = snapshot.globalColor,
                             ledColors = snapshot.ledColors,
                             isHardwareConfirmed = true,
-                            isPendingSync = false
+                            isPendingSync = false,
+                            ledDirection = snapshot.ledDirection,
+                            startupAnimation = snapshot.startupAnimation,
+                            startupDurationMs = snapshot.startupDurationMs
                         )
                         _shiftLightConfig.value = ShiftLightConfig(
                             thresholds = snapshot.rpmThresholds,
@@ -617,13 +624,21 @@ class BlePulseShiftRepository(
         {
             draftStartupAnimation = animation
             draftStartupDurationMs = durationMs
+            _lightingState.value = _lightingState.value.copy(
+                startupAnimation = animation,
+                startupDurationMs = durationMs,
+                isPendingSync = true
+            )
         },
     )
 
     override suspend fun setLedDirection(direction: Int) = writeLightingCommand(
         "LED direction", PulseShiftBleProtocol.V2_OPCODE_SET_LED_DIRECTION,
         { seq -> PulseShiftBleProtocol.buildSetLedDirectionV2(seq, direction) },
-        { draftLedDirection = direction },
+        {
+            draftLedDirection = direction
+            _lightingState.value = _lightingState.value.copy(ledDirection = direction, isPendingSync = true)
+        },
     )
 
     override suspend fun setWarningRgb(color: RgbColor) = writeLightingCommand(
@@ -669,6 +684,28 @@ class BlePulseShiftRepository(
 
             if (!allOk) {
                 _lightingError.tryEmit("One or more threshold/warning writes were not acknowledged.")
+            }
+        }
+    }
+
+    /** Single LED threshold write (opcode 0x16): avoids the 7-command flood
+     *  of updateShiftLightConfig when the user moves one slider. */
+    override suspend fun setLedThreshold(index: Int, rpm: Int) {
+        if (index !in 0..5) return
+        transactionMutex.withLock {
+            if (!bleManager.hasConfigV2Support()) return@withLock
+            if (!requireAuthenticated()) return@withLock
+            draftThresholds = draftThresholds.toMutableList().also { it[index] = rpm }
+            _shiftLightConfig.value = _shiftLightConfig.value.copy(thresholds = draftThresholds.toList())
+            _hasUnsavedChanges.value = true
+            val seq = nextSeq()
+            val ack = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildSetLedThresholdV2(seq, index, rpm),
+                sequence = seq,
+                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD
+            )
+            if (ack == null || !ack.isSuccess) {
+                _lightingError.tryEmit("Threshold write for LED ${index + 1} was not acknowledged.")
             }
         }
     }

@@ -2,6 +2,8 @@ package com.pulseshift.app.ui.screens.devices
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +41,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +61,10 @@ fun DevicesScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
     val connectedDevice by viewModel.connectedDevice.collectAsState()
+    // Auth state collected at screen scope, not inside LazyColumn items.
+    val authState by viewModel.authState.collectAsState()
+    val isAuthenticated by viewModel.isAuthenticated.collectAsState()
+    val enrollmentMessage by viewModel.enrollmentMessage.collectAsState()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -95,19 +104,12 @@ fun DevicesScreen(
                         modifier = Modifier.padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Physical Hardware Interface",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
+                        Text(
+                            text = "Physical Hardware Interface",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
 
-                        // Detailed Connection State Pipeline
                         Text(
                             text = getPipelineDescription(connectionState),
                             style = MaterialTheme.typography.bodySmall,
@@ -130,9 +132,9 @@ fun DevicesScreen(
                 }
                 item {
                     OwnerEnrollmentCard(
-                        authState = viewModel.authState.collectAsState().value,
-                        isAuthenticated = viewModel.isAuthenticated.collectAsState().value,
-                        enrollmentMessage = viewModel.enrollmentMessage.collectAsState().value,
+                        authState = authState,
+                        isAuthenticated = isAuthenticated,
+                        enrollmentMessage = enrollmentMessage,
                         onEnroll = { viewModel.enrollOwner(it) },
                         onAuthenticate = { viewModel.authenticate() },
                         onDismissMessage = { viewModel.clearEnrollmentMessage() }
@@ -206,8 +208,10 @@ fun StatePipelineProgressRow(currentState: BleConnectionState) {
     )
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         states.forEach { state ->
             val isActive = stateOrdinal(currentState) >= stateOrdinal(state)
@@ -276,6 +280,25 @@ fun OwnerEnrollmentCard(
     onDismissMessage: () -> Unit
 ) {
     val secureRandom = java.security.SecureRandom()
+    var confirmEnrollment by remember { mutableStateOf(false) }
+
+    if (confirmEnrollment) {
+        com.pulseshift.app.ui.components.ConfirmDialog(
+            title = "Enroll as Owner?",
+            text = "Re-enrollment overwrites the credential previously stored on the ESP32 " +
+                "(this is the documented credential-recovery path). If another phone enrolled " +
+                "this device, that phone will lose access. Continue only while the 60 s BOOT " +
+                "window is open (cyan pulse on the strip).",
+            confirmLabel = "Enroll",
+            onConfirm = {
+                confirmEnrollment = false
+                val secret = ByteArray(12)
+                secureRandom.nextBytes(secret)
+                onEnroll(secret)
+            },
+            onDismiss = { confirmEnrollment = false }
+        )
+    }
 
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -299,14 +322,7 @@ fun OwnerEnrollmentCard(
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        // Fresh 12-byte secret per enrollment; never hard-coded.
-                        val secret = ByteArray(12)
-                        secureRandom.nextBytes(secret)
-                        onEnroll(secret)
-                    }
-                ) { Text("Enroll as Owner") }
+                Button(onClick = { confirmEnrollment = true }) { Text("Enroll as Owner") }
                 OutlinedButton(onClick = onAuthenticate) { Text("Re-authenticate") }
             }
 
@@ -352,11 +368,29 @@ fun ConnectedDeviceCard(
 
             Text("Verified Protocol & Capabilities", style = MaterialTheme.typography.labelMedium)
 
-            CapabilityRow("PulseShift Protocol Version", device.firmwareVersion ?: "v1.0 (PulseShift BLE Monitoring)", isSupported = true)
-            CapabilityRow("Hardware Configuration V2", if (device.capabilities.hasConfigV2Support) "V2 Config Active" else "Update Required", isSupported = device.capabilities.hasConfigV2Support)
-            CapabilityRow("6-LED WS2812B Engine", "6 Addressable LEDs", isSupported = device.capabilities.supportsIndividualRgb)
-            CapabilityRow("NVS Flash Storage", "Persistent", isSupported = device.capabilities.supportsNvsPersistence)
-            CapabilityRow("Crankshaft Calibration", "Unverified on NS125", isSupported = device.capabilities.supportsLiveRpmVerified)
+            CapabilityRow(
+                "Protocol / Firmware",
+                device.firmwareVersion?.let { "v$it" } ?: "unknown (V1 telemetry only)",
+                isSupported = device.capabilities.hasConfigV2Support
+            )
+            CapabilityRow(
+                "Config V2 (writes, snapshots, auth)",
+                if (device.capabilities.hasConfigV2Support) "Active" else "Not supported by this firmware",
+                isSupported = device.capabilities.hasConfigV2Support
+            )
+            CapabilityRow(
+                "Calibration status",
+                if (device.capabilities.supportsLiveRpmVerified) "VERIFIED" else "UNVERIFIED (provisional ×40)",
+                isSupported = device.capabilities.supportsLiveRpmVerified
+            )
+            CapabilityRow(
+                "Capture stage / LED bench test",
+                listOfNotNull(
+                    if (device.capabilities.supportsCaptureStage) "stage" else null,
+                    if (device.capabilities.supportsLedBenchTest) "bench" else null
+                ).takeIf { it.isNotEmpty() }?.joinToString(" + ") ?: "not advertised",
+                isSupported = device.capabilities.supportsCaptureStage || device.capabilities.supportsLedBenchTest
+            )
         }
     }
 }
