@@ -215,7 +215,7 @@ object PulseShiftBleProtocol {
     // --- Configuration V2 Protocol Encoders & Decoders ---
 
     fun buildV2Frame(opcode: Byte, sequence: Int, payload: ByteArray = ByteArray(0), isStaged: Boolean = false): ByteArray {
-        require(payload.size <= 14) { "Payload cannot exceed 14 bytes for V2 frame" }
+        require(payload.size <= 238) { "Payload cannot exceed 238 bytes for V2 frame" }
         val frame = ByteArray(6 + payload.size)
         frame[0] = 0x02 // Protocol Version 2
         frame[1] = opcode
@@ -492,7 +492,7 @@ object PulseShiftBleProtocol {
     }
 
     fun buildOtaDataV2(seq: Int, chunkIndex: Int, chunkData: ByteArray): ByteArray {
-        require(chunkData.isNotEmpty() && chunkData.size <= 11) { "chunkData size must be between 1 and 11 bytes" }
+        require(chunkData.isNotEmpty() && chunkData.size <= 232) { "chunkData size must be between 1 and 232 bytes" }
         val payload = ByteArray(3 + chunkData.size)
         payload[0] = (chunkIndex and 0xFF).toByte()
         payload[1] = ((chunkIndex shr 8) and 0xFF).toByte()

@@ -151,6 +151,9 @@ class PulseShiftBleManager(
     private val _connectionState = MutableStateFlow(BleConnectionState.DISCONNECTED)
     val connectionState: StateFlow<BleConnectionState> = _connectionState.asStateFlow()
 
+    private val _currentMtu = MutableStateFlow(23)
+    val currentMtu: StateFlow<Int> = _currentMtu.asStateFlow()
+
     /** Last fatal transport error surfaced to the UI (null when healthy). */
     private val _connectionError = MutableStateFlow<String?>(null)
     val connectionError: StateFlow<String?> = _connectionError.asStateFlow()
@@ -562,6 +565,7 @@ class PulseShiftBleManager(
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null
+        _currentMtu.value = 23
         synchronized(this) {
             gattOpQueue.clear()
             activeGattOp = null
@@ -1034,6 +1038,11 @@ class PulseShiftBleManager(
             }
 
             Log.d(TAG, "Discovered service UUID: ${service.uuid}")
+            try {
+                gatt.requestMtu(512)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to request 512 MTU: ${e.message}")
+            }
             for (c in service.characteristics) {
                 Log.d(TAG, "  Discovered char UUID: ${c.uuid}, props=${c.properties}")
             }
@@ -1283,6 +1292,14 @@ class PulseShiftBleManager(
             }
             val data = characteristic.value ?: return
             handleCharacteristicChanged(characteristic.uuid, data)
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            super.onMtuChanged(gatt, mtu, status)
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "GATT MTU updated: $mtu")
+                _currentMtu.value = mtu
+            }
         }
     }
 
