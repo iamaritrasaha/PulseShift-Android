@@ -216,8 +216,8 @@ class ConfigSnapshotReassembler {
                     val rawEffectId = valBytes[0].toInt() and 0xFF
                     val parsedEffect = EffectType.entries.find { it.id == rawEffectId }
                         ?: run {
-                            logE("ConfigSnapshot", "Unsupported Effect ID: $rawEffectId")
-                            return null
+                            logE("ConfigSnapshot", "Unsupported Effect ID: $rawEffectId, safely falling back to STATIC")
+                            EffectType.STATIC
                         }
                     effect = parsedEffect
                     effectSpeed = (valBytes[1].toInt() and 0xFF).coerceIn(0, 100)
@@ -227,8 +227,8 @@ class ConfigSnapshotReassembler {
                     val rawAnimId = valBytes[0].toInt() and 0xFF
                     val parsedAnim = StartupAnimation.entries.find { it.id == rawAnimId }
                         ?: run {
-                            logE("ConfigSnapshot", "Unsupported Startup Animation ID: $rawAnimId")
-                            return null
+                            logE("ConfigSnapshot", "Unsupported Startup Animation ID: $rawAnimId, safely falling back to SWEEP")
+                            StartupAnimation.SWEEP
                         }
                     startupAnimation = parsedAnim
                     startupDurationMs = (valBytes[1].toInt() and 0xFF) or ((valBytes[2].toInt() and 0xFF) shl 8)
@@ -246,11 +246,12 @@ class ConfigSnapshotReassembler {
                     if (len != 3) return null
                     warningRpm = (valBytes[0].toInt() and 0xFF) or ((valBytes[1].toInt() and 0xFF) shl 8)
                     val rawPatternId = valBytes[2].toInt() and 0xFF
-                    if (rawPatternId !in 0..3) {
-                        logE("ConfigSnapshot", "Unsupported Shift Warning Pattern ID: $rawPatternId")
-                        return null
+                    warningPatternId = if (rawPatternId in 0..3) {
+                        rawPatternId
+                    } else {
+                        logE("ConfigSnapshot", "Unsupported Shift Warning Pattern ID: $rawPatternId, safely falling back to 0")
+                        0
                     }
-                    warningPatternId = rawPatternId // 3 = Off
                 }
                 0x18 -> { // Multiplier
                     if (len != 4) return null

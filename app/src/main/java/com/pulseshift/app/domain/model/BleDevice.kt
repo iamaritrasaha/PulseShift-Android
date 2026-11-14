@@ -36,10 +36,21 @@ data class DeviceCapabilities(
     val supportsCaptureStage: Boolean = false,
     val supportsLedBenchTest: Boolean = false,
     val hasConfigV2Support: Boolean = false,
-    val supportsLiveRpmVerified: Boolean = false
+    val supportsLiveRpmVerified: Boolean = false,
+    val maxStartupAnimId: Int = 3,
+    val maxEffectId: Int = 5,
+    val otaActiveSlot: Int = 0xFF,
+    val protocolMinor: Int = 0,
+    val otaFlags: Int = 0,
+    val supportsExtendedStartupAnimation: Boolean = false,
+    val supportsRangeDiscovery: Boolean = false,
+    val supportsOtaUpdate: Boolean = false
 ) {
     val firmwareVersion: String
         get() = if (firmwareMajor > 0) "$firmwareMajor.$firmwareMinor.$firmwarePatch" else "unknown"
+
+    val supportedStartupAnimations: Set<StartupAnimation>
+        get() = StartupAnimation.entries.filter { it.id <= maxStartupAnimId }.toSet()
 
     companion object {
         fun fromV2(
@@ -50,9 +61,16 @@ data class DeviceCapabilities(
             securityMode: Int,
             firmwareMajor: Int = 0,
             firmwareMinor: Int = 0,
-            firmwarePatch: Int = 0
+            firmwarePatch: Int = 0,
+            maxStartupAnimId: Int = 3,
+            maxEffectId: Int = 5,
+            otaActiveSlot: Int = 0xFF,
+            protocolMinor: Int = 0,
+            otaFlags: Int = 0
         ): DeviceCapabilities {
             val mask = featureMask.toInt()
+            val hasExtAnim = (mask and 0x20000) != 0 || maxStartupAnimId >= 5
+            val effectiveMaxAnim = if (hasExtAnim && maxStartupAnimId < 5) 5 else maxStartupAnimId
             return DeviceCapabilities(
                 physicalLedCount = physicalLedCount,
                 configRevision = configRevision,
@@ -78,8 +96,16 @@ data class DeviceCapabilities(
                 supportsCaptureExport = (mask and 0x4000) != 0,
                 supportsCaptureStage = (mask and 0x8000) != 0,
                 supportsLedBenchTest = (mask and 0x10000) != 0,
+                supportsExtendedStartupAnimation = hasExtAnim,
+                supportsRangeDiscovery = (mask and 0x40000) != 0,
+                supportsOtaUpdate = (mask and 0x80000) != 0,
                 hasConfigV2Support = true,
-                supportsLiveRpmVerified = false
+                supportsLiveRpmVerified = false,
+                maxStartupAnimId = effectiveMaxAnim,
+                maxEffectId = maxEffectId,
+                otaActiveSlot = otaActiveSlot,
+                protocolMinor = protocolMinor,
+                otaFlags = otaFlags
             )
         }
     }

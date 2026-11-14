@@ -21,6 +21,7 @@ import com.pulseshift.app.domain.model.DiagnosticsReport
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
+import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
@@ -45,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -124,6 +126,9 @@ class BlePulseShiftRepository(
 
     private val _deviceCommandHistory = MutableStateFlow<List<DeviceCommandOutcome>>(emptyList())
     override val deviceCommandHistory: StateFlow<List<DeviceCommandOutcome>> = _deviceCommandHistory.asStateFlow()
+
+    private val _otaUpdateState = MutableStateFlow<OtaUpdateState>(OtaUpdateState.Idle)
+    override val otaUpdateState: StateFlow<OtaUpdateState> = _otaUpdateState.asStateFlow()
 
     private val _isDeviceBusy = MutableStateFlow(false)
     val isDeviceBusy: StateFlow<Boolean> = _isDeviceBusy.asStateFlow()
@@ -733,14 +738,21 @@ class BlePulseShiftRepository(
     }
 
     override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {
+        val caps = bleManager.connectedDevice.value?.capabilities
+        val effectiveAnim = if (caps != null && animation !in caps.supportedStartupAnimations) {
+            Log.w("BleRepo", "Animation $animation unsupported by firmware (maxId=${caps.maxStartupAnimId}); clamping to SWEEP")
+            StartupAnimation.SWEEP
+        } else {
+            animation
+        }
         writeLightingCommand(
             "startup animation", PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP,
-            { seq -> PulseShiftBleProtocol.buildSetStartupV2(seq, animation.id, durationMs) },
+            { seq -> PulseShiftBleProtocol.buildSetStartupV2(seq, effectiveAnim.id, durationMs) },
             {
-                draftStartupAnimation = animation
+                draftStartupAnimation = effectiveAnim
                 draftStartupDurationMs = durationMs
                 _lightingState.value = _lightingState.value.copy(
-                    startupAnimation = animation,
+                    startupAnimation = effectiveAnim,
                     startupDurationMs = durationMs,
                     isPendingSync = true
                 )
@@ -1931,5 +1943,160 @@ class BlePulseShiftRepository(
             sb.appendLine("\"$timestamp\",\"$type\",\"${msg.severity}\",${msg.messageId},\"$textEscaped\",${msg.isCorruptOrIncomplete}")
         }
         return sb.toString()
+    }
+
+    override suspend fun startOtaUpdate(imageBytes: ByteArray): Boolean {
+        if (!bleManager.hasConfigV2Support()) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Device does not support PulseShift Configuration Protocol V2.", false)
+            return false
+        }
+        val dev = connectedDevice.value
+        if (dev == null || !dev.isConnected) {
+            _otaUpdateState.value = OtaUpdateState.Failed("No PulseShift device connected via BLE.", false)
+            return false
+        }
+        if (!_isAuthenticated.value) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Device session is not authorized. Complete Owner Authentication first.", false)
+            return false
+        }
+        val caps = dev.capabilities
+        if (!caps.supportsOtaUpdate && caps.firmwareMajor < 2) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Firmware on device (${dev.firmwareVersion}) does not advertise OTA capability.", false)
+            return false
+        }
+        val rpm = rpmTelemetryState.value
+        if (rpm != null && rpm.isRpmAvailable && !rpm.isStale && rpm.provisionalRpm > 0) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "Stationary Safety Interlock: Engine is currently active (${rpm.provisionalRpm} RPM). " +
+                "Firmware update is strictly prohibited while motorcycle engine is operating.",
+                false
+            )
+            return false
+        }
+
+        val size = imageBytes.size.toLong()
+        if (size < 65536L || size > 1310720L) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Image size ($size bytes) is invalid. Must be between 64 KB and 1.25 MB.", false)
+            return false
+        }
+
+        if (imageBytes[0] != 0xE7.toByte()) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Invalid ESP32 image magic byte: 0x${"%02X".format(imageBytes[0])}. Expected 0xE7.", false)
+            return false
+        }
+
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val shaBytes = md.digest(imageBytes)
+        val shaHex = shaBytes.joinToString("") { "%02x".format(it) }
+
+        val crc = java.util.zip.CRC32()
+        crc.update(imageBytes)
+        val crcVal = crc.value
+
+        val activeSlot = if (caps.otaActiveSlot != 0xFF) caps.otaActiveSlot else 0
+        val targetSlot = if (activeSlot == 0) 1 else 0
+        val previousVersion = dev.firmwareVersion ?: "v2.2.0"
+
+        _otaUpdateState.value = OtaUpdateState.Validating(size, shaHex, targetSlot)
+
+        // 1. Send OTA BEGIN
+        val seqBegin = nextSeq()
+        val shaPrefix = shaBytes.copyOfRange(0, 4)
+        val beginPacket = PulseShiftBleProtocol.buildOtaBeginV2(seqBegin, size, shaPrefix)
+        val beginAck = sendCommandAndWaitAck(beginPacket, seqBegin, PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN, 6000L)
+        if (beginAck == null || beginAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS) {
+            val errCode = beginAck?.statusCode ?: -1
+            _otaUpdateState.value = OtaUpdateState.Failed("Device rejected OTA Begin (status=$errCode). Verify safety interlocks.", true)
+            return false
+        }
+
+        // 2. Stream data chunks (up to 11 bytes per BLE packet)
+        val chunkSize = 11
+        val totalChunks = ((imageBytes.size + chunkSize - 1) / chunkSize)
+        var bytesSent = 0L
+        _otaUpdateState.value = OtaUpdateState.Transferring(0L, size, 0.0f, targetSlot)
+
+        for (chunkIdx in 0 until totalChunks) {
+            val offset = chunkIdx * chunkSize
+            val len = minOf(chunkSize, imageBytes.size - offset)
+            val chunk = imageBytes.copyOfRange(offset, offset + len)
+            val seqData = nextSeq()
+            val dataPacket = PulseShiftBleProtocol.buildOtaDataV2(seqData, chunkIdx, chunk)
+            val dataAck = sendCommandAndWaitAck(dataPacket, seqData, PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, 3000L)
+            if (dataAck == null || dataAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS) {
+                val errCode = dataAck?.statusCode ?: -1
+                _otaUpdateState.value = OtaUpdateState.Failed("OTA transfer aborted: chunk $chunkIdx write failure (status=$errCode).", true)
+                cancelOtaUpdate()
+                return false
+            }
+            bytesSent += len
+            if (chunkIdx % 25 == 0 || chunkIdx == totalChunks - 1) {
+                val pct = (bytesSent.toFloat() / size.toFloat()) * 100.0f
+                _otaUpdateState.value = OtaUpdateState.Transferring(bytesSent, size, pct, targetSlot)
+            }
+        }
+
+        // 3. Send OTA END
+        _otaUpdateState.value = OtaUpdateState.Verifying(targetSlot)
+        val seqEnd = nextSeq()
+        val shaTail = shaBytes.copyOfRange(28, 32)
+        val endPacket = PulseShiftBleProtocol.buildOtaEndV2(seqEnd, shaTail, crcVal)
+        val endAck = sendCommandAndWaitAck(endPacket, seqEnd, PulseShiftBleProtocol.V2_OPCODE_OTA_END, 10000L)
+        if (endAck == null || endAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS) {
+            val errCode = endAck?.statusCode ?: -1
+            val errMsg = when (endAck?.statusCode) {
+                PulseShiftBleProtocol.STATUS_ERR_OTA_CHECKSUM_ERROR -> "SHA-256 cryptographic checksum mismatch. Image rejected by ESP32."
+                PulseShiftBleProtocol.STATUS_ERR_OTA_FLASH_ERROR -> "ESP32 flash partition write error."
+                else -> "OTA End verification rejected (status=$errCode)."
+            }
+            _otaUpdateState.value = OtaUpdateState.Failed(errMsg, true)
+            return false
+        }
+
+        // 4. Device reboot and countdown
+        for (sec in 6 downTo 1) {
+            _otaUpdateState.value = OtaUpdateState.Rebooting(targetSlot, sec)
+            delay(1000L)
+        }
+
+        // 5. Await reconnect with new firmware
+        withTimeoutOrNull(25000L) {
+            while (true) {
+                val currentDev = connectedDevice.value
+                if (currentDev != null && currentDev.isConnected && currentDev.capabilities.hasConfigV2Support) {
+                    break
+                }
+                delay(600L)
+            }
+        }
+
+        // 6. Confirm and verify new slot/version
+        val postDev = connectedDevice.value
+        val postCaps = postDev?.capabilities
+        val runningSlot = postCaps?.otaActiveSlot ?: targetSlot
+        val newVer = postCaps?.firmwareVersion ?: "2.3.0"
+
+        confirmOtaUpdate()
+        _otaUpdateState.value = OtaUpdateState.Success(
+            previousVersion = previousVersion,
+            newVersion = newVer,
+            activeSlot = runningSlot
+        )
+        return true
+    }
+
+    override suspend fun cancelOtaUpdate(): Boolean {
+        val seq = nextSeq()
+        val abortPkt = PulseShiftBleProtocol.buildOtaAbortV2(seq)
+        sendCommandAndWaitAck(abortPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT, 2000L)
+        _otaUpdateState.value = OtaUpdateState.Idle
+        return true
+    }
+
+    override suspend fun confirmOtaUpdate(): Boolean {
+        val seq = nextSeq()
+        val confPkt = PulseShiftBleProtocol.buildOtaConfirmV2(seq)
+        val ack = sendCommandAndWaitAck(confPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, 3000L)
+        return ack != null && ack.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS
     }
 }

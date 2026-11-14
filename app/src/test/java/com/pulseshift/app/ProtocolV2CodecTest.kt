@@ -464,4 +464,130 @@ class ProtocolV2CodecTest {
         }
         assertNull(result) // Should be rejected because mandatory TLVs missing
     }
+
+    @Test
+    fun testCapabilitiesV2WithRangeDiscoveryAndOta() {
+        // Wire packet format (20 bytes):
+        // [0]: version = 2
+        // [1]: physicalLedCount = 6
+        // [2..5]: featureMask (with bit 17 ext anim, bit 18 range discovery, bit 19 ota)
+        // [6..9]: configRevision = 42
+        // [10]: hardwarePresetCapacity = 0
+        // [11]: securityMode = 1
+        // [12..14]: fwMajor=2, fwMinor=3, fwPatch=0
+        // [15]: maxStartupAnimId = 5
+        // [16]: maxEffectId = 5
+        // [17]: otaActiveSlot = 0
+        // [18]: protocolMinor = 3
+        // [19]: otaFlags = 3
+        val pkt = ByteArray(20)
+        pkt[0] = 2
+        pkt[1] = 6
+        // Feature mask: 0x000E0007 (bits 0,1,2 + 17,18,19)
+        val mask = (1 shl 0) or (1 shl 1) or (1 shl 2) or (1 shl 17) or (1 shl 18) or (1 shl 19)
+        pkt[2] = (mask and 0xFF).toByte()
+        pkt[3] = ((mask shr 8) and 0xFF).toByte()
+        pkt[4] = ((mask shr 16) and 0xFF).toByte()
+        pkt[5] = ((mask shr 24) and 0xFF).toByte()
+        pkt[6] = 42; pkt[7] = 0; pkt[8] = 0; pkt[9] = 0 // Rev 42
+        pkt[10] = 0
+        pkt[11] = 1
+        pkt[12] = 2; pkt[13] = 3; pkt[14] = 0 // 2.3.0
+        pkt[15] = 5 // maxStartupAnimId
+        pkt[16] = 5 // maxEffectId
+        pkt[17] = 0 // otaActiveSlot = app0
+        pkt[18] = 3 // protocolMinor = 3
+        pkt[19] = 3 // otaFlags
+
+        val caps = PulseShiftBleProtocol.parseCapabilitiesV2(pkt)
+        assertNotNull(caps)
+        assertEquals("2.3.0", caps!!.firmwareVersion)
+        assertEquals(6, caps.physicalLedCount)
+        assertEquals(5, caps.maxStartupAnimId)
+        assertTrue(caps.supportsExtendedStartupAnimation)
+        assertTrue(caps.supportsRangeDiscovery)
+        assertTrue(caps.supportsOtaUpdate)
+        assertEquals(0, caps.otaActiveSlot)
+        assertEquals(6, caps.supportedStartupAnimations.size)
+        assertTrue(caps.supportedStartupAnimations.contains(StartupAnimation.CENTER_OUT))
+        assertTrue(caps.supportedStartupAnimations.contains(StartupAnimation.STROBE))
+    }
+
+    @Test
+    fun testCapabilitiesV2BackwardCompatibilityLegacyFirmware() {
+        // Legacy 15-byte packet without bytes 15..19
+        val pkt = ByteArray(15)
+        pkt[0] = 2
+        pkt[1] = 6
+        val mask = (1 shl 0) or (1 shl 1) or (1 shl 2) // only basic anim bit 2
+        pkt[2] = (mask and 0xFF).toByte()
+        pkt[3] = ((mask shr 8) and 0xFF).toByte()
+        pkt[4] = 0; pkt[5] = 0
+        pkt[6] = 10; pkt[7] = 0; pkt[8] = 0; pkt[9] = 0
+        pkt[10] = 0; pkt[11] = 1
+        pkt[12] = 2; pkt[13] = 2; pkt[14] = 0 // 2.2.0
+
+        val caps = PulseShiftBleProtocol.parseCapabilitiesV2(pkt)
+        assertNotNull(caps)
+        assertEquals("2.2.0", caps!!.firmwareVersion)
+        assertEquals(3, caps.maxStartupAnimId) // safely defaults to 3
+        assertFalse(caps.supportsExtendedStartupAnimation)
+        assertFalse(caps.supportsRangeDiscovery)
+        assertFalse(caps.supportsOtaUpdate)
+        assertEquals(4, caps.supportedStartupAnimations.size) // NONE, SWEEP, WAVE, PULSE
+        assertFalse(caps.supportedStartupAnimations.contains(StartupAnimation.CENTER_OUT))
+        assertFalse(caps.supportedStartupAnimations.contains(StartupAnimation.STROBE))
+    }
+
+    @Test
+    fun testBuildOtaCommands() {
+        // Test GET_ARG_RANGES
+        val getRanges = PulseShiftBleProtocol.buildGetArgRangesV2(101)
+        assertEquals(6, getRanges.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_GET_ARG_RANGES, getRanges[1])
+
+        // Test OTA_BEGIN
+        val shaPrefix = byteArrayOf(0x12, 0x34, 0x56, 0x78)
+        val otaBegin = PulseShiftBleProtocol.buildOtaBeginV2(102, 65536L, shaPrefix)
+        assertEquals(16, otaBegin.size) // 6 header + 10 payload
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN, otaBegin[1])
+        assertEquals(10.toByte(), otaBegin[4]) // payload length
+        assertEquals(0xA5.toByte(), otaBegin[6])
+        assertEquals(0x5C.toByte(), otaBegin[7])
+
+        // Test OTA_DATA
+        val chunkData = byteArrayOf(0xE7.toByte(), 0x01, 0x02, 0x03)
+        val otaData = PulseShiftBleProtocol.buildOtaDataV2(103, 0, chunkData)
+        assertEquals(6 + 7, otaData.size) // 6 header + (3 + 4) payload
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, otaData[1])
+        assertEquals(7.toByte(), otaData[4])
+        assertEquals(0.toByte(), otaData[6]) // chunkIdx low
+        assertEquals(0.toByte(), otaData[7]) // chunkIdx high
+        assertEquals(4.toByte(), otaData[8]) // dataLen
+        assertEquals(0xE7.toByte(), otaData[9])
+
+        // Test OTA_END
+        val shaTail = byteArrayOf(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte(), 0xDD.toByte())
+        val otaEnd = PulseShiftBleProtocol.buildOtaEndV2(104, shaTail, 0x11223344L)
+        assertEquals(6 + 8, otaEnd.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_END, otaEnd[1])
+        assertEquals(8.toByte(), otaEnd[4])
+
+        // Test OTA_ABORT
+        val otaAbort = PulseShiftBleProtocol.buildOtaAbortV2(105)
+        assertEquals(6, otaAbort.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT, otaAbort[1])
+
+        // Test OTA_CONFIRM
+        val otaConfirm = PulseShiftBleProtocol.buildOtaConfirmV2(106)
+        assertEquals(8, otaConfirm.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, otaConfirm[1])
+        assertEquals(0xA5.toByte(), otaConfirm[6])
+        assertEquals(0x5C.toByte(), otaConfirm[7])
+
+        // Test OTA_STATUS
+        val otaStatus = PulseShiftBleProtocol.buildOtaStatusV2(107)
+        assertEquals(6, otaStatus.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS, otaStatus[1])
+    }
 }

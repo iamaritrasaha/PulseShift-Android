@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -627,6 +628,9 @@ fun StartupPanel(
     viewModel: LightingViewModel,
     lighting: LightingState
 ) {
+    val device by viewModel.connectedDevice.collectAsState()
+    val supportedAnims = device?.capabilities?.supportedStartupAnimations ?: StartupAnimation.entries.toSet()
+
     var durationMs by remember(lighting.startupDurationMs) {
         mutableFloatStateOf(lighting.startupDurationMs.toFloat())
     }
@@ -640,7 +644,7 @@ fun StartupPanel(
             subtitle = "Plays once upon ESP32 startup before engaging live tachometer illumination"
         ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            StartupAnimation.entries.forEach { animation ->
+            StartupAnimation.entries.filter { it in supportedAnims }.forEach { animation ->
                 val isSelected = lighting.startupAnimation == animation
                 val cardBorder = if (isSelected) {
                     BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)

@@ -115,4 +115,10 @@ interface PulseShiftRepository {
     suspend fun commitCalibrationPoint(refRpm: Int): Boolean
     suspend fun computeCalibration(apply: Boolean): CalibrationFitResult?
     suspend fun abortCalibrationSession(): Boolean
+
+    // Secure Dual-Slot Firmware OTA Updates (protocol 2.3.0)
+    val otaUpdateState: StateFlow<com.pulseshift.app.domain.model.OtaUpdateState>
+    suspend fun startOtaUpdate(imageBytes: ByteArray): Boolean
+    suspend fun cancelOtaUpdate(): Boolean
+    suspend fun confirmOtaUpdate(): Boolean
 }

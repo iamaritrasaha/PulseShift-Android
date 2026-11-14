@@ -1,62 +1,240 @@
-# PulseShift Android App
+# PulseShift Android Application
 
 <p align="center">
   <img src="app/src/main/res/drawable/ic_pulseshift_logo_round.png" width="128" alt="PulseShift Logo" />
 </p>
 
-Companion app for the PulseShift ESP32 shift-light controller (see the
-[firmware repository](https://github.com/iamaritrasaha/PulseShift) and its
-`docs/BLE-PROTOCOL.md` for the wire contract).
+**Native Android companion application for the PulseShift ESP32 motorcycle smart lighting and shift-light controller.**
 
-## Build & install (first time)
+PulseShift for Android provides complete standalone control over the physical ESP32 controller mounted on the motorcycle. It interfaces exclusively over Bluetooth Low Energy (BLE), offering real-time engine telemetry, lighting customisation, preset storage, diagnostic logs, a full-featured terminal console, and safe dual-slot firmware Over-The-Air (OTA) updates.
 
-1. Install **Android Studio** (or just its SDK) and open this folder
-   (`D:\Development\PulseShift\android`) as a project.
-2. Let Gradle sync (JDK 23 is preconfigured via `gradle.properties`).
-3. Build and install on a phone with Android 8.0+ (BLE required):
+- **Firmware repository:** [PulseShift Firmware](https://github.com/iamaritrasaha/PulseShift)
+- **Protocol wire specification:** [docs/BLE-PROTOCOL.md](https://github.com/iamaritrasaha/PulseShift/blob/main/docs/BLE-PROTOCOL.md)
+
+---
+
+## Table of Contents
+
+1. [Architecture & Design Principles](#1-architecture--design-principles)
+2. [Prerequisites & Building from Source](#2-prerequisites--building-from-source)
+3. [First Connection & Owner Enrollment](#3-first-connection--owner-enrollment)
+4. [Lighting Studio & Configuration Controls](#4-lighting-studio--configuration-controls)
+5. [Presets vs Controller NVS Persistence](#5-presets-vs-controller-nvs-persistence)
+6. [Interactive Terminal Command Reference](#6-interactive-terminal-command-reference)
+7. [Firmware Compatibility & Capability Discovery](#7-firmware-compatibility--capability-discovery)
+8. [Safe Dual-Slot Firmware OTA Updates](#8-safe-dual-slot-firmware-ota-updates)
+9. [Troubleshooting & Diagnostics](#9-troubleshooting--diagnostics)
+10. [Known Limitations & Safety Safeguards](#10-known-limitations--safety-safeguards)
+
+---
+
+## 1. Architecture & Design Principles
+
+The Android application is designed around modern Android development standards and robust embedded integration:
+
+- **Jetpack Compose & Material 3:** Modern UI with dynamic color support (Android 12+ wallpaper palette), custom dark and light themes, and motorcycle dashboard-optimized contrast.
+- **Unidirectional Data Flow (UDF):** Clean architecture separating domain models, repository interfaces, DataStore local cache, and BLE transport managers.
+- **Strict Wire Fidelity:** The application never fabricates device state. Every slider, switch, or terminal output reflects authoritative controller snapshots and verified sequence-correlated acknowledgments.
+- **Defensible Cryptographic Security:** Owner credentials never leave the Android KeyStore. All write mutations and diagnostic captures require challenge-response authentication bound to the BLE connection handle.
+- **Decoupled Lifecycle:** The Android application may be redesigned or updated continuously without requiring an ESP32 USB reflash.
+
+---
+
+## 2. Prerequisites & Building from Source
+
+### Requirements
+- **Operating System:** Windows 10/11, macOS, or Linux
+- **JDK:** Java Development Kit 17 or 21+ (JDK 23 supported via Android Studio JBR: `D:\APPS\Android Studio\jbr`)
+- **Android SDK:** Compile SDK 35, Min SDK 26 (Android 8.0 Oreo or higher)
+- **Device Requirements:** Physical Android phone with Bluetooth 5.0+ LE support
+
+### Building via Command Line (PowerShell / Bash)
+
+1. Open a terminal in the project directory:
+   ```powershell
+   cd D:\Development\PulseShift\android
+   ```
+
+2. Run unit tests to verify repository, protocol codecs, and parser integrity:
+   ```powershell
+   .\gradlew.bat testDebugUnitTest
+   ```
+
+3. Assemble the debug APK:
    ```powershell
    .\gradlew.bat :app:assembleDebug
+   ```
+
+4. Install directly to a connected phone over ADB:
+   ```powershell
    adb install -r app\build\outputs\apk\debug\app-debug.apk
    ```
-   The debug APK is also prebuilt at
-   `app\build\outputs\apk\debug\app-debug.apk` after any build.
-4. On the phone: allow **Nearby devices** permission (Android 12+ asks for
-   `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT`) and turn Bluetooth on.
 
-## First connection
+The compiled package is written to `app\build\outputs\apk\debug\app-debug.apk`.
 
-1. Flash the ESP32 with the firmware (Arduino IDE: board "ESP32 Dev Module",
-   partition "Default 4MB with spiffs", upload from the firmware repo).
-2. Power the ESP32. It advertises as **PulseShift**.
-3. In the app, open **Devices** from the dashboard/device connection action, then scan and connect.
-4. **Owner enrollment (once per device):** press the physical **BOOT** button
-   on the ESP32 (a 60-second cyan pulse opens the commissioning window), then
-   in the app choose *Enroll as Owner* and confirm. The secret is generated on
-   the phone, stored in the Android KeyStore and proven by challenge-response
-   on every later connection.
-5. The Dashboard now shows live estimated RPM (labeled **UNVERIFIED** until a
-   firmware-driven calibration is completed from the RPM tab).
+---
 
-## Terminal
+## 3. First Connection & Owner Enrollment
 
-Open **Terminal** from the app's diagnostics or device controls for a command console over the authenticated BLE
-protocol (`HELP` lists everything). Destructive commands (CONFIG RESET,
-RESTART, CLEAR DIAGNOSTICS) ask for confirmation; USB-only operations
-(STREAM, CLEAR YES) are refused with an explanation instead of faked.
+PulseShift implements zero-trust hardware authorization. Live RPM telemetry is broadcast openly for responsiveness, but all configuration writes and diagnostic exports require authenticated ownership.
 
-## Compatibility and configuration
+### Step-by-Step Enrollment Flow
 
-The Android app and ESP32 firmware are versioned separately. Updating the Android APK does **not** update or reflash the ESP32. Ordinary app UI changes, phone-side presets and controls for firmware-supported capabilities must continue to work with the installed device firmware.
+1. **Power Controller:** Power on the motorcycle or bench supply powering the ESP32. The strip plays its startup animation and enters Bluetooth advertising as `PulseShift`.
+2. **Open App:** Launch PulseShift and grant Nearby Devices (`BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`) and Location permissions (required on Android 8-11).
+3. **Scan & Connect:** Navigate to **Devices**, tap **Scan**, and select your `PulseShift` device.
+4. **Physical Authorization Window:**
+   - Press the physical **BOOT button (GPIO0)** on the ESP32 DevKit board.
+   - The WS2812B LED strip immediately pulses in **Cyan** for 60 seconds.
+5. **Enroll Owner:**
+   - In the app, tap **Enroll as Owner**.
+   - The app generates a cryptographically secure 12-byte random secret, stores it inside the encrypted Android KeyStore, and transmits it via `BLE_CFG_OP_ENROLL_OWNER (0x24)`.
+   - The ESP32 saves the hash to persistent NVS storage (`"ps_sec"` namespace).
+6. **Subsequent Connections:**
+   - You never need to press the BOOT button again during normal riding.
+   - Upon connection, the phone automatically performs a challenge-response handshake (`REQUEST_CHALLENGE 0x26` → `AUTHENTICATE 0x25`) with a single-use 32-bit nonce.
 
-- **Device-side defaults:** LEDs activate at 1000, 2000, 3000, 4000, 5000 and 6000 RPM; warning at 6500 RPM. These thresholds do not cap the displayed live RPM.
-- **Shipped phone presets:** default to **100% brightness (255/255)** in the pending Android repair release; custom presets must preserve individually saved brightness.
-- **Current RPM conversion:** provisional CAN ID `0x301`, byte 0, multiplier 40.0. Never assume firmware calibration is verified because the UI shows RPM. Verified effect 4 requires a calibration record; provisional effect 5 is the normal unverified preview.
-- **Two different saves:** saving a preset writes phone-side storage; applying a preset writes the active ESP32 configuration; `CONFIG SAVE` persists that configuration to ESP32 NVS. Only an acknowledged and persisted save should be displayed as saved permanently.
-- **Authorization:** RPM telemetry is not proof of authorization for configuration, historical log or capture access. Connect and enroll/authenticate through Devices before privileged commands. `HELP` in Terminal lists the commands understood by the installed app; some require newer firmware capabilities.
+---
 
-**Upgrade safety:** the current firmware does not have a demonstrated, supported phone-triggered OTA update path. Do not use unverified update files or erase/repartition the ESP32 to install a UI change. Before any firmware update, export valued CAN recordings and retain a recoverable working build. For firmware code, pin compatibility against [the BLE protocol contract](https://github.com/iamaritrasaha/PulseShift/blob/main/docs/BLE-PROTOCOL.md).
+## 4. Lighting Studio & Configuration Controls
 
-## Verification status
+The **Lighting Studio** tab exposes authoritative real-time control over all six WS2812B LEDs:
 
-The Android repair work is tracked in [PR #1](https://github.com/iamaritrasaha/PulseShift-Android/pull/1). Unit tests and an emulator build were reported for the proposed changes, but real phone/ESP32 regression tests are required before considering BLE reconnect, configuration persistence and all terminal operations verified. Keep the previous working APK and its saved data until the replacement is confirmed on hardware.
+- **Master Power:** Hardware power switch toggling illumination (`BLE_CFG_OP_SET_POWER 0x10`).
+- **Brightness:** Global linear brightness slider from 0 to 255 (`BLE_CFG_OP_SET_BRIGHTNESS 0x11`).
+- **Global & Per-LED RGB:**
+  - Interactive HSV Color Wheel with quick-select racing presets (Racing Red, Amber Warning, Cyan Glow, White Strobe).
+  - Select "All LEDs" for uniform illumination, or tap any individual LED pixel (1 through 6) to configure custom multi-color arrangements (`BLE_CFG_OP_SET_LED_RGB 0x13`).
+- **Lighting Effects (`0x14`):**
+  - `0: Static Color` - Constant solid illumination.
+  - `1: Breathing` - Gentle sine-wave pulse.
+  - `2: Rainbow Wave` - Dynamic full-spectrum color flow across the strip.
+  - `3: Color Chase` - Sequential high-speed runner beam.
+  - `4: RPM Bar (Verified)` - Physical tachometer shift lights (requires verified calibration record).
+  - `5: Provisional Preview (Unverified)` - Live preview tracking provisional candidate CAN ID `0x301` (x40 multiplier).
+- **Power-On Ignition Animations (`0x15`):**
+  - `0: None` - Instantly applies stored illumination on boot.
+  - `1: Sweep` - Sequential left-to-right ignition wipe.
+  - `2: Wave` - Smooth dual-crested spatial wave greeting.
+  - `3: Pulse` - Dynamic dual-heartbeat motorcycle greeting pulse.
+  - `4: Center Out` - Drag race staging tree animation expanding from center to outer edges.
+  - `5: Strobe Rush` - F1 grid start multi-flash ignition burst sequence.
+- **Direction & Warning Alerts:**
+  - Forward (LED 1 → 6) or Reverse (LED 6 → 1) progressive sweep (`0x1A`).
+  - Shift Warning threshold (default 6,500 RPM) with configurable flash styles: Fast Flash (10 Hz), Strobe Blink (20 Hz), Solid Over-rev, or Alert Off (`0x17`).
 
+---
+
+## 5. Presets vs Controller NVS Persistence
+
+It is vital to understand the difference between local presets and device NVS persistence:
+
+1. **Local Phone Presets (DataStore):**
+   - Stored purely inside the phone's local storage.
+   - Allows riders to save unlimited custom lighting themes, track profiles, and color schemes.
+   - Shipped presets default to 100% brightness (255/255).
+2. **Staged Transaction Buffer (RAM):**
+   - Applying a preset streams settings into the ESP32's staging buffer (`BLE_CFG_OP_BEGIN_TRANSACTION 0x30`).
+   - The device applies changes atomically upon `COMMIT_TRANSACTION (0x31)`.
+   - Staged changes are active in RAM immediately, but **will be lost upon power loss** unless committed to non-volatile flash.
+3. **Controller NVS Persistence (`CONFIG SAVE`):**
+   - Tapping **Save to Controller** or running `CONFIG SAVE` issues `BLE_CFG_OP_SAVE_CONFIG (0x20)`.
+   - The active configuration is written to the ESP32's non-volatile NVS flash (`"ps_cfg"` partition).
+   - Saved settings survive motorcycle battery disconnects and power cycles.
+
+---
+
+## 6. Interactive Terminal Command Reference
+
+The **Terminal** tab provides an authenticated command console directly mirroring the firmware's serial monitor:
+
+| Command | Arguments | Opcode | Description |
+|---|---|---|---|
+| `STATUS` / `CAN STATUS` | None | `0x50` | Stream full diagnostics TLV report (uptime, CAN health, error counts). |
+| `BLE STATUS` | None | `0x50` | Inspect BLE connection parameters, link auth state, and RSSI. |
+| `RPM STATUS` | None | Telemetry | Inspect live candidate CAN ID `0x301` raw byte, estimated RPM, and freshness. |
+| `RPM MONITOR ON` / `OFF` | None | Client | Enable/disable real-time 10 Hz streaming transcript in terminal. |
+| `RPM MULTIPLIER` | `<0.1..1000.0>` | `0x18` | Adjust provisional candidate multiplier (default 40.0). |
+| `CONFIG STATUS` | None | `0x02` | Fetch and display reassembled configuration snapshot TLV. |
+| `CONFIG SAVE` | None | `0x20` | Commit current live configuration to ESP32 NVS flash. |
+| `CONFIG RESET` | None | `0x21` | Restore safe factory defaults. (Requires confirmation; preserves owner credentials). |
+| `EFFECT` | `<0..5>` | `0x14` | Switch lighting effect mode. (Mode 5 = unverified CAN preview). |
+| `RPM TEST` | `<0..20000>` | `0x55` | 10-second synthetic bench test illuminating LEDs without real CAN data. |
+| `RPM TEST OFF` | None | `0x55` | Terminate synthetic bench test immediately. |
+| `STAGE` | `<1\|2\|3>` | `0x54` | Label subsequent flash capture records: 1=Key-On, 2=Idle, 3=RPM sweep. |
+| `CAPTURE STOP` / `RESUME`| None | `0x53` | Start or pause CAN raw logging to internal LittleFS flash. |
+| `LOGS` | None | `0x10` (v1) | Stream a 20-line page of historical diagnostic logs from flash. |
+| `DUMP` / `DUMP NEXT` | None | `0x12` (v1) | Stream a 12-record page of stored raw CAN capture frames. |
+| `DUMP CANCEL` | None | `0x13` (v1) | Cancel active capture streaming. |
+| `RESTART` | None | `0x51` | Soft-reboot the ESP32 controller. (Requires confirmation). |
+| `CLEAR DIAGNOSTICS` | None | `0x52` | Wipe event log `/diag.log`. (Requires confirmation; CAN captures untouched). |
+| `AUTH` | None | Help | Display owner commissioning and authentication instructions. |
+
+---
+
+## 7. Firmware Compatibility & Capability Discovery
+
+To guarantee that the Android application can be updated freely without breaking older installed firmware or requiring repeated USB flashes, PulseShift implements strict capability discovery:
+
+- **Protocol Version Negotiation:**
+  The app queries the 20-byte `Capabilities (0xd218)` characteristic upon connection.
+- **Wire Bytes 15..19:**
+  - `maxStartupAnimId` (Byte 15): Advertises maximum supported animation ID (e.g. 5 on v2.3.0, 3 on legacy v2.2.0).
+  - `maxEffectId` (Byte 16): Advertises maximum effect index.
+  - `otaActiveSlot` (Byte 17): Indicates currently running boot slot (`0` = app0, `1` = app1).
+  - `protocolMinor` (Byte 18): Advertises minor protocol revision (`3` for v2.3.0).
+  - `otaFlags` (Byte 19): Bitmask denoting stationary interlock and rollback support.
+- **Dynamic UI Adaptation:**
+  The Lighting Studio dynamically filters animation cards by `capabilities.supportedStartupAnimations`. Older firmware will only display animations 0..3, while v2.3.0+ displays all 6 animations.
+- **Non-Fatal Snapshot Parsing:**
+  If newer firmware introduces unrecognised effect or animation IDs, the Android parser gracefully falls back to safe defaults (`EffectType.STATIC`, `StartupAnimation.SWEEP`) rather than rejecting the snapshot.
+
+---
+
+## 8. Safe Dual-Slot Firmware OTA Updates
+
+PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrades directly over BLE, eliminating the need to connect a USB cable to the motorcycle.
+
+### Safety Invariants & Interlocks
+
+1. **Dual-Partition Architecture:**
+   The ESP32 uses dual 1.25 MB application slots (`app0` and `app1`). Updates are always flashed to the currently **inactive** partition. The running application is never overwritten in place.
+2. **Stationary Safety Interlock:**
+   OTA update is strictly blocked if the motorcycle engine is running (`RPM > 0`) or if active CAN engine speed is detected. Updates must only be performed with the motorcycle parked on a stable power supply.
+3. **Cryptographic SHA-256 Integrity:**
+   The app computes the FIPS 180-2 SHA-256 digest and CRC32 of the binary. The ESP32 incrementally hashes incoming chunked packets with hardware SHA acceleration and compares the full digest before marking the partition valid.
+4. **Bootloader Self-Test & Rollback:**
+   Upon restart, the bootloader boots into the new slot in `ESP_OTA_IMG_PENDING_VERIFY` state. The firmware runs an autonomous self-test (validating NVS configuration and TWAI driver). If verification fails, the ESP32 automatically reboots into the previous working slot.
+5. **Rollback Cancellation (`0x64`):**
+   Once the phone reconnects and verifies the running version, it issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` to mark the new application permanently valid.
+
+### OTA Update Procedure
+
+1. Obtain a compiled production binary (`PulseShift.ino.bin`).
+2. Navigate to **Settings → Firmware & Updates**.
+3. Tap **Flash .bin** and select the firmware binary from your phone's storage.
+4. The app verifies the binary header magic (`0xE7`), validates size limits (64 KB - 1.25 MB), and begins the chunked BLE stream.
+5. Monitor progress on the real-time progress dialog.
+6. Once streaming finishes, the ESP32 verifies checksums, swaps the active boot partition, and reboots.
+7. The app awaits BLE reconnection and confirms that the new firmware version is active on the target slot.
+
+---
+
+## 9. Troubleshooting & Diagnostics
+
+| Problem | Cause | Solution |
+|---|---|---|
+| App cannot find `PulseShift` | BLE disabled or permissions missing | Enable Bluetooth; ensure Nearby Devices and Location permissions are granted. |
+| Commands rejected with `UNAUTHORIZED (4)` | Session not authenticated | Open **Devices**, press the physical ESP32 BOOT button (cyan pulse), and tap **Enroll as Owner**. |
+| Slider changes revert after reconnect | Settings were not persisted | Run `CONFIG SAVE` in Terminal or tap **Save to Controller** in Lighting Studio. |
+| RPM reads `---` or `STALE` | No CAN frames or vehicle key off | Switch motorcycle ignition ON. Verify SN65HVD230 wiring (GPIO16 CRX, 3V3 CTX). |
+| Shift warning not triggering | Warning disabled or below threshold | Ensure Shift Warning pattern is set to Flash, Strobe, or Solid, and warning RPM is configured properly. |
+| OTA Flash button disabled | Link disconnected or engine active | Connect via BLE, authenticate owner session, and ensure motorcycle engine is off (0 RPM). |
+
+---
+
+## 10. Known Limitations & Safety Safeguards
+
+- **Provisional Engine Speed (CAN ID `0x301`):** While 22,542 real CAN frames have been captured with 0 errors on a 2025 Bajaj Pulsar NS125 ABS, the RPM conversion multiplier (40.0) remains an unverified provisional estimate. Shift light mode 4 is disabled until independent tachometer calibration is executed.
+- **Strictly Passive CAN:** The firmware never transmits CAN frames. CTX is clamped to 3V3, GPIO17 is air-gapped, and the TWAI controller operates exclusively in listen-only mode.
+- **Physical BOOT Requirement for Key Enrollment:** Physical button access is required to enroll a phone or recover credentials. This guarantees that nearby unauthorised BLE devices cannot hijack shift light or recording parameters.

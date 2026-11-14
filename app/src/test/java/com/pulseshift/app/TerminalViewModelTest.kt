@@ -23,6 +23,7 @@ import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.HistoricalPageEnd
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.LogSeverity
+import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
@@ -189,6 +190,11 @@ class TerminalTestRepository : PulseShiftRepository {
     override suspend fun commitCalibrationPoint(refRpm: Int): Boolean = false
     override suspend fun computeCalibration(apply: Boolean): CalibrationFitResult? = null
     override suspend fun abortCalibrationSession(): Boolean = false
+
+    override val otaUpdateState: StateFlow<OtaUpdateState> = MutableStateFlow<OtaUpdateState>(OtaUpdateState.Idle).asStateFlow()
+    override suspend fun startOtaUpdate(imageBytes: ByteArray): Boolean = true
+    override suspend fun cancelOtaUpdate(): Boolean = true
+    override suspend fun confirmOtaUpdate(): Boolean = true
 }
 
 class TerminalViewModelTest {

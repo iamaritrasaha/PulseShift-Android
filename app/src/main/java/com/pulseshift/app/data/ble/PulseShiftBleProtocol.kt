@@ -30,6 +30,7 @@ object PulseShiftBleProtocol {
     // Configuration V2 Opcodes (Canonical Firmware Protocol)
     const val V2_OPCODE_GET_CAPABILITIES: Byte = 0x01
     const val V2_OPCODE_GET_SNAPSHOT: Byte = 0x02
+    const val V2_OPCODE_GET_ARG_RANGES: Byte = 0x03
     const val V2_OPCODE_SET_POWER: Byte = 0x10
     const val V2_OPCODE_SET_BRIGHTNESS: Byte = 0x11
     const val V2_OPCODE_SET_GLOBAL_RGB: Byte = 0x12
@@ -71,6 +72,14 @@ object PulseShiftBleProtocol {
     const val V2_OPCODE_SET_CAPTURE_STAGE: Byte = 0x54
     const val V2_OPCODE_SET_LED_TEST_RPM: Byte = 0x55
 
+    // Secure Authenticated Dual-Slot Firmware OTA (protocol 2.3.0)
+    const val V2_OPCODE_OTA_BEGIN: Byte = 0x60
+    const val V2_OPCODE_OTA_DATA: Byte = 0x61
+    const val V2_OPCODE_OTA_END: Byte = 0x62
+    const val V2_OPCODE_OTA_ABORT: Byte = 0x63
+    const val V2_OPCODE_OTA_CONFIRM: Byte = 0x64
+    const val V2_OPCODE_OTA_STATUS: Byte = 0x65
+
     // Control Request Opcodes (V1 Protocol)
     const val CONTROL_OPCODE_FETCH_HISTORICAL_LOG: Byte = 0x10
     const val CONTROL_OPCODE_CANCEL_HISTORICAL_LOG: Byte = 0x11
@@ -87,6 +96,8 @@ object PulseShiftBleProtocol {
     const val STATUS_ERR_STORAGE_ERROR: Byte = 0x06
     const val STATUS_ERR_VERSION_MISMATCH: Byte = 0x07
     const val STATUS_ERR_VALIDATION_FAILED: Byte = 0x08
+    const val STATUS_ERR_OTA_CHECKSUM_ERROR: Byte = 0x09
+    const val STATUS_ERR_OTA_FLASH_ERROR: Byte = 0x0A
 
     // --- Protocol V1 Binary Decoders ---
 
@@ -436,6 +447,13 @@ object PulseShiftBleProtocol {
         val fwMinor = if (bytes.size > 13) bytes[13].toInt() and 0xFF else 0
         val fwPatch = if (bytes.size > 14) bytes[14].toInt() and 0xFF else 0
 
+        // Bytes 15-19 carry range discovery and OTA metadata (protocol 2.3.0 and later).
+        val maxStartupAnimId = if (bytes.size > 15) bytes[15].toInt() and 0xFF else 3
+        val maxEffectId = if (bytes.size > 16) bytes[16].toInt() and 0xFF else 5
+        val otaActiveSlot = if (bytes.size > 17) bytes[17].toInt() and 0xFF else 0xFF
+        val protoMinor = if (bytes.size > 18) bytes[18].toInt() and 0xFF else 0
+        val otaFlags = if (bytes.size > 19) bytes[19].toInt() and 0xFF else 0
+
         return DeviceCapabilities.fromV2(
             physicalLedCount = physicalLedCount,
             featureMask = featureMask,
@@ -444,7 +462,65 @@ object PulseShiftBleProtocol {
             securityMode = securityMode,
             firmwareMajor = fwMajor,
             firmwareMinor = fwMinor,
-            firmwarePatch = fwPatch
+            firmwarePatch = fwPatch,
+            maxStartupAnimId = maxStartupAnimId,
+            maxEffectId = maxEffectId,
+            otaActiveSlot = otaActiveSlot,
+            protocolMinor = protoMinor,
+            otaFlags = otaFlags
         )
     }
+
+    // --- Range Discovery & OTA Command Builders (protocol 2.3.0) ---
+
+    fun buildGetArgRangesV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_GET_ARG_RANGES, seq)
+
+    fun buildOtaBeginV2(seq: Int, totalSize: Long, sha256Prefix4B: ByteArray): ByteArray {
+        require(sha256Prefix4B.size >= 4) { "sha256Prefix4B must be at least 4 bytes" }
+        val payload = ByteArray(10)
+        payload[0] = 0xA5.toByte()
+        payload[1] = 0x5C.toByte()
+        payload[2] = (totalSize and 0xFF).toByte()
+        payload[3] = ((totalSize shr 8) and 0xFF).toByte()
+        payload[4] = ((totalSize shr 16) and 0xFF).toByte()
+        payload[5] = ((totalSize shr 24) and 0xFF).toByte()
+        payload[6] = sha256Prefix4B[0]
+        payload[7] = sha256Prefix4B[1]
+        payload[8] = sha256Prefix4B[2]
+        payload[9] = sha256Prefix4B[3]
+        return buildV2Frame(V2_OPCODE_OTA_BEGIN, seq, payload)
+    }
+
+    fun buildOtaDataV2(seq: Int, chunkIndex: Int, chunkData: ByteArray): ByteArray {
+        require(chunkData.isNotEmpty() && chunkData.size <= 11) { "chunkData size must be between 1 and 11 bytes" }
+        val payload = ByteArray(3 + chunkData.size)
+        payload[0] = (chunkIndex and 0xFF).toByte()
+        payload[1] = ((chunkIndex shr 8) and 0xFF).toByte()
+        payload[2] = chunkData.size.toByte()
+        System.arraycopy(chunkData, 0, payload, 3, chunkData.size)
+        return buildV2Frame(V2_OPCODE_OTA_DATA, seq, payload)
+    }
+
+    fun buildOtaEndV2(seq: Int, sha256Tail4B: ByteArray, crc32: Long): ByteArray {
+        require(sha256Tail4B.size >= 4) { "sha256Tail4B must be at least 4 bytes" }
+        val payload = ByteArray(8)
+        payload[0] = sha256Tail4B[0]
+        payload[1] = sha256Tail4B[1]
+        payload[2] = sha256Tail4B[2]
+        payload[3] = sha256Tail4B[3]
+        payload[4] = (crc32 and 0xFF).toByte()
+        payload[5] = ((crc32 shr 8) and 0xFF).toByte()
+        payload[6] = ((crc32 shr 16) and 0xFF).toByte()
+        payload[7] = ((crc32 shr 24) and 0xFF).toByte()
+        return buildV2Frame(V2_OPCODE_OTA_END, seq, payload)
+    }
+
+    fun buildOtaAbortV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_OTA_ABORT, seq)
+
+    fun buildOtaConfirmV2(seq: Int): ByteArray {
+        val payload = byteArrayOf(0xA5.toByte(), 0x5C.toByte())
+        return buildV2Frame(V2_OPCODE_OTA_CONFIRM, seq, payload)
+    }
+
+    fun buildOtaStatusV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_OTA_STATUS, seq)
 }
