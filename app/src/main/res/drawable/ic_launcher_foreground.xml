@@ -4,10 +4,69 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Outer Technical Tachometer Rail -->
+    <path
+        android:strokeColor="#2E2C3D"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,74 A 28,28 0 1 1 76,74" />
+
+    <!-- 6 Progressive Shift Light LEDs (1k through 6k RPM) -->
+    <!-- LED 1: Cyan (1k RPM) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M 31,68 A 3.5,3.5 0 1 1 31,61 A 3.5,3.5 0 1 1 31,68 Z" />
+
+    <!-- LED 2: Neon Lime (2k RPM) -->
+    <path
+        android:fillColor="#76FF03"
+        android:pathData="M 35,46 A 3.5,3.5 0 1 1 35,39 A 3.5,3.5 0 1 1 35,46 Z" />
+
+    <!-- LED 3: Racing Amber (3k RPM) -->
+    <path
+        android:fillColor="#FFD600"
+        android:pathData="M 47,33 A 3.5,3.5 0 1 1 47,26 A 3.5,3.5 0 1 1 47,33 Z" />
+
+    <!-- LED 4: Performance Orange (4k RPM) -->
+    <path
+        android:fillColor="#FF9100"
+        android:pathData="M 61,33 A 3.5,3.5 0 1 1 61,26 A 3.5,3.5 0 1 1 61,33 Z" />
+
+    <!-- LED 5: Sunset Crimson (5k RPM) -->
+    <path
+        android:fillColor="#FF3D00"
+        android:pathData="M 73,46 A 3.5,3.5 0 1 1 73,39 A 3.5,3.5 0 1 1 73,46 Z" />
+
+    <!-- LED 6: Redline Shift Warning (6k RPM) -->
+    <path
+        android:fillColor="#FF1744"
+        android:pathData="M 77,68 A 3.5,3.5 0 1 1 77,61 A 3.5,3.5 0 1 1 77,68 Z" />
+
+    <!-- Stylized PulseShift Central 'P' / Tachometer Needle Pulse -->
+    <!-- Vertical Spine -->
     <path
         android:fillColor="#8B5CF6"
-        android:pathData="M54,24 A30,30 0 1,0 54,84 A30,30 0 1,0 54,24 Z" />
+        android:pathData="M 46,44 L 49.5,44 L 49.5,72 L 46,72 Z" />
+
+    <!-- Precision Head Arc of the 'P' -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 48,44 L 57,44 A 7,7 0 0 1 64,51 A 7,7 0 0 1 57,58 L 48,58" />
+
+    <!-- Dynamic Tachometer Needle Angle -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M 54,58 L 66,70" />
+
+    <!-- Center Pivot Indicator Bead -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M44,38 L68,54 L44,70 Z" />
+        android:pathData="M 54,60 A 2.2,2.2 0 1 1 54,55.6 A 2.2,2.2 0 1 1 54,60 Z" />
+
 </vector>

@@ -26,6 +26,7 @@ class HomeViewModel(
     val connectionState: StateFlow<BleConnectionState> = repository.connectionState
     val connectionError: StateFlow<String?> = repository.connectionError
     val isReconnecting: StateFlow<Boolean> = repository.isReconnecting
+    val isAuthenticated: StateFlow<Boolean> = repository.isAuthenticated
     val lightingSyncError: kotlinx.coroutines.flow.SharedFlow<String> = repository.lightingSyncError
 
     /** Debounced brightness write: drag gestures must not flood the GATT queue. */

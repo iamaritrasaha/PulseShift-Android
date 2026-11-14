@@ -1,6 +1,8 @@
 package com.pulseshift.app.ui.screens.onboarding
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,8 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.pulseshift.app.R
 
 @Composable
 fun OnboardingScreen(
@@ -53,16 +58,16 @@ fun OnboardingScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(80.dp)
+                        .size(100.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(Color(0xFF101014))
+                        .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.TwoWheeler,
-                        contentDescription = null,
-                        modifier = Modifier.size(44.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
+                        contentDescription = "PulseShift Brand Logo",
+                        modifier = Modifier.size(90.dp)
                     )
                 }
 

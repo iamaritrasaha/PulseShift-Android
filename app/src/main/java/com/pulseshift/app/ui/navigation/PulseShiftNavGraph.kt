@@ -1,15 +1,15 @@
 package com.pulseshift.app.ui.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -18,6 +18,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.pulseshift.app.ui.components.PulseShiftBottomBar
+import com.pulseshift.app.ui.components.PulseShiftTopBar
 import com.pulseshift.app.ui.screens.devices.DevicesScreen
 import com.pulseshift.app.ui.screens.devices.DevicesViewModel
 import com.pulseshift.app.ui.screens.home.HomeScreen
@@ -53,129 +55,142 @@ fun PulseShiftNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val showBottomBar = currentRoute in Screen.bottomNavItems.map { it.route }
+    val connectionState by homeViewModel.connectionState.collectAsState()
+    val isAuthenticated by homeViewModel.isAuthenticated.collectAsState()
+    val connectedDevice by homeViewModel.connectedDevice.collectAsState()
+
+    val isPrimaryScreen = currentRoute in Screen.bottomNavItems.map { it.route }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            if (isPrimaryScreen) {
+                PulseShiftTopBar(
+                    connectionState = connectionState,
+                    isAuthenticated = isAuthenticated,
+                    deviceName = connectedDevice?.name,
+                    onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
+                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                )
+            }
+        },
         bottomBar = {
-            if (showBottomBar) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp
-                ) {
-                    Screen.bottomNavItems.forEach { screen ->
-                        val selected = currentRoute == screen.route
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = {
-                                screen.icon?.let {
-                                    Icon(it, contentDescription = screen.title)
-                                }
-                            },
-                            label = { Text(screen.title, maxLines = 1) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        )
+            if (isPrimaryScreen) {
+                PulseShiftBottomBar(
+                    screens = Screen.bottomNavItems,
+                    currentRoute = currentRoute,
+                    onNavigate = { screen ->
+                        navController.navigate(screen.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
-                }
+                )
             }
         }
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = startDestination,
-            modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    top = innerPadding.calculateTopPadding(),
+                    bottom = innerPadding.calculateBottomPadding()
+                ),
+            contentAlignment = Alignment.TopCenter
         ) {
-            composable(Screen.Onboarding.route) {
-                OnboardingScreen(
-                    onConnectDevice = {
-                        onCompleteOnboarding()
-                        navController.navigate(Screen.Devices.route) {
-                            popUpTo(Screen.Onboarding.route) { inclusive = true }
-                        }
-                    },
-                    onContinueToHome = {
-                        onCompleteOnboarding()
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.Onboarding.route) { inclusive = true }
-                        }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 760.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                NavHost(
+                    navController = navController,
+                    startDestination = startDestination,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    composable(Screen.Onboarding.route) {
+                        OnboardingScreen(
+                            onConnectDevice = {
+                                onCompleteOnboarding()
+                                navController.navigate(Screen.Devices.route) {
+                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
+                                }
+                            },
+                            onContinueToHome = {
+                                onCompleteOnboarding()
+                                navController.navigate(Screen.Home.route) {
+                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
+                                }
+                            }
+                        )
                     }
-                )
-            }
 
-            composable(Screen.Home.route) {
-                HomeScreen(
-                    viewModel = homeViewModel,
-                    onNavigateToLighting = { navController.navigate(Screen.Lighting.route) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
-                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
-                    onNavigateToPresets = { navController.navigate(Screen.Presets.route) },
-                    onNavigateToRpm = { navController.navigate(Screen.Rpm.route) }
-                )
-            }
+                    composable(Screen.Home.route) {
+                        HomeScreen(
+                            viewModel = homeViewModel,
+                            onNavigateToLighting = { navController.navigate(Screen.Lighting.route) },
+                            onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                            onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
+                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
+                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) },
+                            onNavigateToRpm = { navController.navigate(Screen.Rpm.route) }
+                        )
+                    }
 
-            composable(Screen.Lighting.route) {
-                LightingScreen(
-                    viewModel = lightingViewModel,
-                    onNavigateToPresets = { navController.navigate(Screen.Presets.route) }
-                )
-            }
+                    composable(Screen.Lighting.route) {
+                        LightingScreen(
+                            viewModel = lightingViewModel,
+                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) }
+                        )
+                    }
 
-            composable(Screen.Rpm.route) {
-                RpmScreen(
-                    viewModel = rpmViewModel,
-                    onNavigateBack = { navController.popBackStack() }
-                )
-            }
+                    composable(Screen.Rpm.route) {
+                        RpmScreen(
+                            viewModel = rpmViewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
 
-            composable(Screen.Diagnostics.route) {
-                LogsScreen(
-                    viewModel = logsViewModel,
-                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) }
-                )
-            }
+                    composable(Screen.Diagnostics.route) {
+                        LogsScreen(
+                            viewModel = logsViewModel,
+                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) }
+                        )
+                    }
 
-            composable(Screen.Presets.route) {
-                PresetsScreen(
-                    viewModel = presetsViewModel,
-                    onNavigateBack = { navController.popBackStack() }
-                )
-            }
+                    composable(Screen.Presets.route) {
+                        PresetsScreen(
+                            viewModel = presetsViewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
 
-            composable(Screen.Terminal.route) {
-                TerminalScreen(
-                    viewModel = terminalViewModel,
-                    onNavigateBack = { navController.popBackStack() }
-                )
-            }
+                    composable(Screen.Terminal.route) {
+                        TerminalScreen(
+                            viewModel = terminalViewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
 
-            composable(Screen.Devices.route) {
-                DevicesScreen(
-                    viewModel = devicesViewModel,
-                    onNavigateBack = { navController.popBackStack() }
-                )
-            }
+                    composable(Screen.Devices.route) {
+                        DevicesScreen(
+                            viewModel = devicesViewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
 
-            composable(Screen.Settings.route) {
-                SettingsScreen(
-                    viewModel = settingsViewModel,
-                    onNavigateBack = { navController.popBackStack() }
-                )
+                    composable(Screen.Settings.route) {
+                        SettingsScreen(
+                            viewModel = settingsViewModel,
+                            onNavigateBack = { navController.popBackStack() }
+                        )
+                    }
+                }
             }
         }
     }
