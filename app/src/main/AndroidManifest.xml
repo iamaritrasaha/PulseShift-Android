@@ -22,7 +22,8 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
 
-    <!-- Optional BLE feature so the app can still be installed for Demo Mode -->
+    <!-- BLE is optional so the app still installs on BLE-less hardware;
+         screens degrade to clear disconnected states instead of crashing. -->
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="false" />
