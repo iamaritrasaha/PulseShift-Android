@@ -33,7 +33,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -56,6 +55,7 @@ import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.ui.components.LedStripPreview
+import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
 import com.pulseshift.app.ui.components.StatusDot
 import com.pulseshift.app.ui.theme.HardwareAmberWarning
@@ -158,7 +158,12 @@ fun HomeScreen(
                 }
             }
         }
-        SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        )
     }
 }
 
@@ -402,7 +407,7 @@ private fun LightControlCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Slider(
+        PulseShiftSlider(
             value = lighting.brightness.toFloat(),
             onValueChange = { viewModel.updateBrightness(it.toInt()) },
             valueRange = 0f..255f

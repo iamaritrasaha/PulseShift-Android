@@ -331,8 +331,7 @@ fun DeviceCaptureTab(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical)
-            .padding(bottom = PulseShiftSpacing.BottomScrollPadding),
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical),
         verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         // Device report card
@@ -542,8 +541,7 @@ fun DiagnosticsOverviewTab(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical)
-            .padding(bottom = PulseShiftSpacing.BottomScrollPadding),
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical),
         verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         // 1. CAN Bus & TWAI Controller Status Card
@@ -855,7 +853,12 @@ fun EventLogsTab(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = PulseShiftSpacing.BottomScrollPadding),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = PulseShiftSpacing.ScreenHorizontal,
+                    end = PulseShiftSpacing.ScreenHorizontal,
+                    top = PulseShiftSpacing.SmallGap,
+                    bottom = PulseShiftSpacing.BottomScrollPadding
+                ),
                 verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)
             ) {
                 items(logs, key = { it.id }) { item ->

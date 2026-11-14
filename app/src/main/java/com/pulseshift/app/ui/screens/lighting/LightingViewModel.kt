@@ -8,6 +8,8 @@ import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.LightingState
+import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
@@ -41,7 +43,7 @@ class LightingViewModel(
     val authState: StateFlow<com.pulseshift.app.domain.model.AuthState> = repository.authState
     val isAuthenticated: StateFlow<Boolean> = repository.isAuthenticated
 
-    private val _actionFeedback = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _actionFeedback = kotlinx.coroutines.flow.MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 8)
     val actionFeedback: SharedFlow<String> = _actionFeedback
 
     private val _isBusy = MutableStateFlow(false)
@@ -124,16 +126,22 @@ class LightingViewModel(
     fun apply1000To6000Profile() {
         viewModelScope.launch {
             _isBusy.value = true
-            val ok = repository.apply1000To6000Profile()
-            _isBusy.value = false
-            if (ok) {
-                if (repository.hasUnsavedChanges.value) {
-                    _actionFeedback.tryEmit("1,000–6,000 RPM profile active in RAM (NVS unconfirmed)")
-                } else {
-                    _actionFeedback.tryEmit("1,000–6,000 RPM profile applied and saved to ESP32")
+            try {
+                when (repository.apply1000To6000Profile()) {
+                    ProfileApplyResult.PERSISTED -> {
+                        _actionFeedback.tryEmit("1,000–6,000 RPM profile applied and saved to ESP32 Flash (NVS)")
+                    }
+                    ProfileApplyResult.APPLIED_ONLY -> {
+                        _actionFeedback.tryEmit("1,000–6,000 RPM profile active in RAM only (NVS save unconfirmed)")
+                    }
+                    ProfileApplyResult.FAILED -> {
+                        _actionFeedback.tryEmit("Failed to apply 1,000–6,000 RPM profile (check connection/auth)")
+                    }
                 }
-            } else {
-                _actionFeedback.tryEmit("Failed to apply 1,000–6,000 RPM profile (check connection/auth)")
+            } catch (e: Exception) {
+                _actionFeedback.tryEmit("Error applying profile: ${e.message}")
+            } finally {
+                _isBusy.value = false
             }
         }
     }

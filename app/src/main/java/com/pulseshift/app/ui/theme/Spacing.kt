@@ -37,7 +37,7 @@ object PulseShiftSpacing {
     /** Minimum accessible touch target according to Material 3 & WCAG guidelines (48dp). */
     val MinTouchTarget: Dp = 48.dp
 
-    /** Bottom extra padding for scrollable screens so content is never obscured by navigation bar (32dp). */
-    val BottomScrollPadding: Dp = 32.dp
+    /** Bottom extra padding for scrollable screens so content ends naturally above navigation bar (16dp). */
+    val BottomScrollPadding: Dp = 16.dp
 }
 

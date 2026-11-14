@@ -212,8 +212,13 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                                 Text(
-                                    "BLE Config V2 protocol · target vehicle: Bajaj Pulsar NS125",
+                                    "Designed & Developed by Aritra Saha",
                                     style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    "© 2026 Aritra Saha. All rights reserved.",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -249,6 +254,8 @@ fun SettingsScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("PulseShift is a native Android companion application for physical motorcycle smart lighting and shift-light configuration.")
+                        Text("• Author: Designed & Engineered by Aritra Saha")
+                        Text("• Copyright: © 2026 Aritra Saha. All rights reserved.")
                         Text("• Target: 2025 Indian Bajaj Pulsar NS125 ABS")
                         Text("• Hardware: ESP32 DevKit V1 + 6x WS2812B Addressable RGB Strip")
                         Text("• Protocol: PulseShift BLE Config V2 (Staged transactions & NVS flash persistence)")

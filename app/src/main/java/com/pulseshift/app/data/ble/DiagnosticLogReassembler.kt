@@ -23,6 +23,18 @@ class DiagnosticLogReassembler {
         _completedMessages.tryEmit(message)
     }
 
+    fun emitDirectCaptureRecord(record: CaptureRecord) {
+        _captureRecordEvents.tryEmit(record)
+    }
+
+    fun emitDirectCapturePageEnd(pageEnd: HistoricalPageEnd) {
+        _capturePageEndEvents.tryEmit(pageEnd)
+    }
+
+    fun emitDirectLogPageEnd(pageEnd: HistoricalPageEnd) {
+        _pageEndEvents.tryEmit(pageEnd)
+    }
+
     private val _pageEndEvents = MutableSharedFlow<HistoricalPageEnd>(extraBufferCapacity = 16)
     val pageEndEvents: SharedFlow<HistoricalPageEnd> = _pageEndEvents.asSharedFlow()
 

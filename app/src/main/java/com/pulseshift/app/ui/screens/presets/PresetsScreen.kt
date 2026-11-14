@@ -346,38 +346,31 @@ fun PresetListItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = preset.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(Modifier.height(PulseShiftSpacing.Micro))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = preset.effect.displayName,
-                            style = PulseShiftMonoTiny,
-                            color = MaterialTheme.colorScheme.primary
+                            text = preset.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
-                        Text("•", style = PulseShiftMonoTiny, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = "${preset.brightness * 100 / 255}% Brightness",
-                            style = PulseShiftMonoTiny,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        preset.shiftLightConfig?.let { cfg ->
-                            Text("•", style = PulseShiftMonoTiny, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                text = "${cfg.thresholds.first()}–${cfg.thresholds.last()} RPM",
-                                style = PulseShiftMonoTiny,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Spacer(Modifier.height(PulseShiftSpacing.Micro))
+                        // Single wrapping text: multiple Row siblings squeezed the
+                        // RPM-range tail to zero width and wrapped it one
+                        // character per line, inflating the card.
+                        val subtitle = buildString {
+                            append(preset.effect.displayName)
+                            append("  ·  ${preset.brightness * 100 / 255}% Brightness")
+                            preset.shiftLightConfig?.let { cfg ->
+                                append("  ·  ${cfg.thresholds.first()}–${cfg.thresholds.last()} RPM")
+                            }
                         }
+                        Text(
+                            text = subtitle,
+                            style = PulseShiftMonoTiny,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
                     }
-                }
 
                 StatusPill(
                     text = if (preset.isCustom) "CUSTOM" else "BUILT-IN",

@@ -15,6 +15,7 @@ import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
@@ -54,7 +55,7 @@ interface PulseShiftRepository {
     // Configuration Controls
     suspend fun setPower(power: Boolean)
     suspend fun setBrightness(brightness: Int)
-    suspend fun setEffect(effect: EffectType)
+    suspend fun setEffect(effect: EffectType): Boolean
     suspend fun setEffectSpeed(speed: Int)
     suspend fun setGlobalColor(color: RgbColor)
     suspend fun setIndividualLedColor(index: Int, color: RgbColor)
@@ -78,11 +79,11 @@ interface PulseShiftRepository {
     suspend fun restoreDefaultPresets()
 
     // Rapid Profile Application
-    suspend fun apply1000To6000Profile(): Boolean
+    suspend fun apply1000To6000Profile(): ProfileApplyResult
 
     // Transactions & Non-Volatile Persistence
     suspend fun saveConfigurationToController(): Boolean
-    suspend fun reloadConfigFromController()
+    suspend fun reloadConfigFromController(): ConfigSnapshot?
     suspend fun restoreDefaultControllerConfig()
 
     // Log Control
@@ -103,7 +104,8 @@ interface PulseShiftRepository {
     suspend fun setCaptureRecording(enable: Boolean): Boolean
     suspend fun setCaptureStage(stage: Int): Boolean
     suspend fun setLedTestRpm(rpm: Int, enable: Boolean): Boolean
-    fun startCaptureExport()
+    /** Begin a bounded, cancellable capture export from [startRecord] (12-record pages). */
+    fun startCaptureExport(startRecord: Long = 0L)
     fun cancelCaptureExport()
 
     // Firmware-driven calibration workflow

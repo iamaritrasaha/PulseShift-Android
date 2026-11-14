@@ -218,6 +218,7 @@ class PulseShiftBleManager(
     private var reconnectAttempts = 0
     private var connectedSinceMs = 0L
     private var connectTimeoutJob: Job? = null
+    private var serviceReadinessTimeoutJob: Job? = null
     private var reconnectJob: Job? = null
     private var healthySessionJob: Job? = null
     private val _isReconnecting = MutableStateFlow(false)
@@ -350,6 +351,7 @@ class PulseShiftBleManager(
         tickerJob?.cancel()
         reconnectJob?.cancel()
         connectTimeoutJob?.cancel()
+        serviceReadinessTimeoutJob?.cancel()
         healthySessionJob?.cancel()
         opTimeoutJob?.cancel()
     }
@@ -521,11 +523,42 @@ class PulseShiftBleManager(
         }
     }
 
+    private fun cancelServiceReadinessTimeout() {
+        serviceReadinessTimeoutJob?.cancel()
+        serviceReadinessTimeoutJob = null
+    }
+
+    private fun startServiceReadinessTimeoutJob(gatt: BluetoothGatt) {
+        serviceReadinessTimeoutJob?.cancel()
+        serviceReadinessTimeoutJob = scope.launch {
+            delay(15_000L)
+            if (activeGatt == gatt &&
+                _connectionState.value != BleConnectionState.RECEIVING_TELEMETRY &&
+                _connectionState.value != BleConnectionState.READY &&
+                _connectionState.value != BleConnectionState.CONNECTED_WAITING_FOR_DATA
+            ) {
+                val devAddr = gatt.device?.address ?: lastConnectedAddress ?: "unknown"
+                Log.w(TAG, "Service discovery / readiness timed out after 15s for $devAddr (state=${_connectionState.value})")
+                logDiagnosticEvent("Service discovery / readiness timed out after 15s for $devAddr", LogSeverity.WARNING)
+                val errorDetail = "Service discovery / readiness timed out after 15 seconds"
+                _connectionError.value = errorDetail
+                _connectionState.value = BleConnectionState.ERROR
+                teardownTransport(wasUserInitiated = false)
+                if (autoReconnectEnabled && !userInitiatedDisconnect) {
+                    scheduleReconnect(errorDetail)
+                } else {
+                    _isReconnecting.value = false
+                }
+            }
+        }
+    }
+
     /**
      * Teardown GATT connection, clear queues, and reset operational state.
      * Does NOT mark userInitiatedDisconnect = true unless called from user disconnect().
      */
     private fun teardownTransport(wasUserInitiated: Boolean) {
+        cancelServiceReadinessTimeout()
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null
@@ -555,6 +588,7 @@ class PulseShiftBleManager(
         reconnectJob = null
         connectTimeoutJob?.cancel()
         connectTimeoutJob = null
+        cancelServiceReadinessTimeout()
         healthySessionJob?.cancel()
         healthySessionJob = null
         _isReconnecting.value = false
@@ -584,6 +618,11 @@ class PulseShiftBleManager(
 
     @androidx.annotation.VisibleForTesting
     internal fun isGattOpPending(): Boolean = synchronized(this) { isGattOpPending }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun setConnectionStateForTesting(state: BleConnectionState) {
+        _connectionState.value = state
+    }
 
     @androidx.annotation.VisibleForTesting
     internal fun setActiveGattForTesting(gatt: BluetoothGatt?) {
@@ -623,6 +662,40 @@ class PulseShiftBleManager(
     @androidx.annotation.VisibleForTesting
     internal fun enqueueGattOpForTesting(op: GattOp) {
         enqueueGattOp(op)
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun getServiceReadinessTimeoutJob(): Job? = serviceReadinessTimeoutJob
+
+    @androidx.annotation.VisibleForTesting
+    internal fun triggerStartServiceReadinessTimeoutJobForTesting(gatt: BluetoothGatt) {
+        startServiceReadinessTimeoutJob(gatt)
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun triggerCancelServiceReadinessTimeoutForTesting() {
+        cancelServiceReadinessTimeout()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun triggerServiceReadinessTimeoutImmediatelyForTesting(gatt: BluetoothGatt) {
+        if (activeGatt == gatt &&
+            _connectionState.value != BleConnectionState.RECEIVING_TELEMETRY &&
+            _connectionState.value != BleConnectionState.READY &&
+            _connectionState.value != BleConnectionState.CONNECTED_WAITING_FOR_DATA
+        ) {
+            val devAddr = gatt.device?.address ?: lastConnectedAddress ?: "unknown"
+            logDiagnosticEvent("Service discovery / readiness timed out after 15s for $devAddr", LogSeverity.WARNING)
+            val errorDetail = "Service discovery / readiness timed out after 15 seconds"
+            _connectionError.value = errorDetail
+            _connectionState.value = BleConnectionState.ERROR
+            teardownTransport(wasUserInitiated = false)
+            if (autoReconnectEnabled && !userInitiatedDisconnect) {
+                scheduleReconnect(errorDetail)
+            } else {
+                _isReconnecting.value = false
+            }
+        }
     }
 
     private var isV2CapabilitiesValidated = false
@@ -877,6 +950,7 @@ class PulseShiftBleManager(
                 connectedSinceMs = System.currentTimeMillis()
                 _connectionState.value = BleConnectionState.DISCOVERING_SERVICES
                 gatt.discoverServices()
+                startServiceReadinessTimeoutJob(gatt)
 
                 healthySessionJob?.cancel()
                 healthySessionJob = scope.launch {
@@ -1047,6 +1121,7 @@ class PulseShiftBleManager(
                 PulseShiftBleProtocol.RPM_CHAR_UUID -> {
                     PulseShiftBleProtocol.parseRpmTelemetry(value)?.let { rpm ->
                         checkRebootAndEmitRpm(rpm)
+                        cancelServiceReadinessTimeout()
                         _connectionState.value = BleConnectionState.RECEIVING_TELEMETRY
                     }
                 }
@@ -1078,6 +1153,7 @@ class PulseShiftBleManager(
                                 )
                             )
                         }
+                        cancelServiceReadinessTimeout()
                         _connectionState.value = BleConnectionState.READY
                     } else {
                         isV2CapabilitiesValidated = false
@@ -1121,6 +1197,7 @@ class PulseShiftBleManager(
                 PulseShiftBleProtocol.RPM_CHAR_UUID -> {
                     PulseShiftBleProtocol.parseRpmTelemetry(value)?.let { rpm ->
                         checkRebootAndEmitRpm(rpm)
+                        cancelServiceReadinessTimeout()
                         _connectionState.value = BleConnectionState.RECEIVING_TELEMETRY
                     }
                 }

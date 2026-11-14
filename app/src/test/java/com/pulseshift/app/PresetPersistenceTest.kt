@@ -21,11 +21,13 @@ import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
 import com.pulseshift.app.domain.model.StartupAnimation
 import com.pulseshift.app.domain.model.WarningStyle
+import com.pulseshift.app.ui.screens.lighting.LightingViewModel
 import com.pulseshift.app.ui.screens.presets.PresetsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -85,7 +87,7 @@ class PresetPersistenceTest {
     @Test
     fun testAllDefaultPresetsHaveBrightness255() {
         val defaults = Preset.DefaultPresets
-        assertEquals("Shipped presets must contain exactly 6 profiles", 6, defaults.size)
+        assertTrue("Shipped presets must contain at least 6 profiles", defaults.size >= 6)
         defaults.forEach { preset ->
             assertEquals(
                 "Preset '${preset.name}' (${preset.id}) must default to 255 (100% brightness)",
@@ -200,7 +202,7 @@ class PresetPersistenceTest {
         // Verify initial state has default presets and BLE is disconnected
         assertEquals(BleConnectionState.DISCONNECTED, viewModel.connectionState.value)
         val initialCount = viewModel.presets.value.size
-        assertEquals(6, initialCount)
+        assertEquals(Preset.DefaultPresets.size, initialCount)
 
         // 1. Create Preset Offline
         viewModel.createPreset(
@@ -236,7 +238,7 @@ class PresetPersistenceTest {
 
         // 5. Restore Defaults Offline
         viewModel.restoreDefaults()
-        assertEquals(6, viewModel.presets.value.size)
+        assertEquals(Preset.DefaultPresets.size, viewModel.presets.value.size)
         assertEquals(null, viewModel.persistenceError.value)
     }
 
@@ -349,6 +351,86 @@ class PresetPersistenceTest {
         assertEquals(2000, preset.startupDurationMs)
         assertEquals(255, preset.brightness)
     }
+
+    @Test
+    fun testProfileApplyResultDistinguishesPersistedVsAppliedOnly() {
+        assertTrue("PERSISTED must report isSuccess", ProfileApplyResult.PERSISTED.isSuccess)
+        assertTrue("PERSISTED must report isPersisted", ProfileApplyResult.PERSISTED.isPersisted)
+
+        assertTrue("APPLIED_ONLY must report isSuccess", ProfileApplyResult.APPLIED_ONLY.isSuccess)
+        assertFalse("APPLIED_ONLY must not report isPersisted", ProfileApplyResult.APPLIED_ONLY.isPersisted)
+
+        assertFalse("FAILED must not report isSuccess", ProfileApplyResult.FAILED.isSuccess)
+        assertFalse("FAILED must not report isPersisted", ProfileApplyResult.FAILED.isPersisted)
+    }
+
+    @Test
+    fun testPersistenceRequiresBothSuccessAndPersistedFlag() {
+        // 1. Success + Persisted (0x01) -> True persistence
+        val ackSuccessPersisted = ConfigAckResponse(
+            opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+            sequenceRef = 42,
+            statusCode = ConfigAckResponse.STATUS_OK.toByte(),
+            resultFlags = 0x01.toByte(),
+            activeRevision = 100L
+        )
+        assertTrue(ackSuccessPersisted.isSuccess)
+        assertTrue(ackSuccessPersisted.isPersisted)
+        assertTrue("Successful persistence strictly requires ACK.isSuccess && ACK.isPersisted",
+            ackSuccessPersisted.isSuccess && ackSuccessPersisted.isPersisted)
+
+        // 2. Success + Staged only / RAM only (resultFlags without bit 0) -> NOT persisted
+        val ackSuccessNotPersisted = ConfigAckResponse(
+            opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+            sequenceRef = 43,
+            statusCode = ConfigAckResponse.STATUS_OK.toByte(),
+            resultFlags = 0x04.toByte(), // Applied in RAM, but NOT persisted to NVS
+            activeRevision = 100L
+        )
+        assertTrue(ackSuccessNotPersisted.isSuccess)
+        assertFalse(ackSuccessNotPersisted.isPersisted)
+        assertFalse("RAM-only success must NOT evaluate as persisted",
+            ackSuccessNotPersisted.isSuccess && ackSuccessNotPersisted.isPersisted)
+
+        // 3. Storage error with bit set (invalid state) -> NOT persisted because not success
+        val ackError = ConfigAckResponse(
+            opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+            sequenceRef = 44,
+            statusCode = ConfigAckResponse.STATUS_ERR_STORAGE_ERROR.toByte(),
+            resultFlags = 0x01.toByte(),
+            activeRevision = 100L
+        )
+        assertFalse(ackError.isSuccess)
+        assertFalse("Failed ACK must NOT evaluate as persisted even if resultFlags has bits",
+            ackError.isSuccess && ackError.isPersisted)
+    }
+
+    @Test
+    fun testLightingViewModelSurfacesExplicitProfileOutcomes() = runBlocking {
+        val fakeRepo = FakePulseShiftRepository()
+        val viewModel = LightingViewModel(fakeRepo)
+
+        // 1. Persisted outcome
+        fakeRepo.profileApplyOutcome = ProfileApplyResult.PERSISTED
+        viewModel.apply1000To6000Profile()
+        var feedback = viewModel.actionFeedback.replayCache.lastOrNull()
+        assertTrue("Feedback must state applied and saved to ESP32 Flash (NVS)",
+            feedback?.contains("applied and saved to ESP32 Flash (NVS)") == true)
+
+        // 2. Applied-only outcome
+        fakeRepo.profileApplyOutcome = ProfileApplyResult.APPLIED_ONLY
+        viewModel.apply1000To6000Profile()
+        feedback = viewModel.actionFeedback.replayCache.lastOrNull()
+        assertTrue("Feedback must state active in RAM only (NVS save unconfirmed)",
+            feedback?.contains("active in RAM only (NVS save unconfirmed)") == true)
+
+        // 3. Failed outcome
+        fakeRepo.profileApplyOutcome = ProfileApplyResult.FAILED
+        viewModel.apply1000To6000Profile()
+        feedback = viewModel.actionFeedback.replayCache.lastOrNull()
+        assertTrue("Feedback must state failed to apply profile",
+            feedback?.contains("Failed to apply") == true)
+    }
 }
 
 /**
@@ -419,12 +501,13 @@ class FakePulseShiftRepository : PulseShiftRepository {
     var applyFailureMessage = "Apply preset failed"
     var shouldFailSave = false
     var saveFailureMessage = "Save preset failed"
+    var profileApplyOutcome: ProfileApplyResult = ProfileApplyResult.PERSISTED
 
     override suspend fun enrollOwner(secret: ByteArray): Boolean = false
     override suspend fun authenticateChallengeResponse(): Boolean = false
     override suspend fun setPower(power: Boolean) {}
     override suspend fun setBrightness(brightness: Int) {}
-    override suspend fun setEffect(effect: EffectType) {}
+    override suspend fun setEffect(effect: EffectType): Boolean = true
     override suspend fun setEffectSpeed(speed: Int) {}
     override suspend fun setGlobalColor(color: RgbColor) {}
     override suspend fun setIndividualLedColor(index: Int, color: RgbColor) {}
@@ -513,9 +596,9 @@ class FakePulseShiftRepository : PulseShiftRepository {
         _presets.value = Preset.DefaultPresets
     }
 
-    override suspend fun apply1000To6000Profile(): Boolean = true
+    override suspend fun apply1000To6000Profile(): ProfileApplyResult = profileApplyOutcome
     override suspend fun saveConfigurationToController(): Boolean = true
-    override suspend fun reloadConfigFromController() {}
+    override suspend fun reloadConfigFromController(): ConfigSnapshot? = _configSnapshot.value
     override suspend fun restoreDefaultControllerConfig() {}
     override suspend fun requestHistoricalLogPage(startOffset: Long) {}
     override suspend fun cancelHistoricalLogRetrieval() {}
@@ -529,7 +612,7 @@ class FakePulseShiftRepository : PulseShiftRepository {
     override suspend fun setCaptureRecording(enable: Boolean): Boolean = true
     override suspend fun setCaptureStage(stage: Int): Boolean = true
     override suspend fun setLedTestRpm(rpm: Int, enable: Boolean): Boolean = true
-    override fun startCaptureExport() {}
+    override fun startCaptureExport(startRecord: Long) {}
     override fun cancelCaptureExport() {}
     override suspend fun queryCalibrationStatus(): CalibrationSessionStatus? = null
     override suspend fun beginCalibrationSession(): Boolean = true

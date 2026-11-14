@@ -33,10 +33,13 @@ class PulseShiftBleLifecycleTest {
     private val testScope = CoroutineScope(Dispatchers.Unconfined + Job())
     private val managersToClose = mutableListOf<PulseShiftBleManager>()
 
-    private fun createTestBleManager(context: Context = mock(Context::class.java)): PulseShiftBleManager {
+    private fun createTestBleManager(
+        context: Context = mock(Context::class.java),
+        scope: CoroutineScope = testScope
+    ): PulseShiftBleManager {
         val manager = PulseShiftBleManager(
             context = context,
-            scope = testScope,
+            scope = scope,
             adapterProvider = { null }
         )
         managersToClose.add(manager)
@@ -330,5 +333,51 @@ class PulseShiftBleLifecycleTest {
         assertTrue("Snapshot waiter must be cancelled", snapshotDeferred.isCancelled)
         assertTrue("Diagnostics waiter must be completed", diagnosticsDeferred.isCompleted)
         assertTrue("Diagnostics waiter must be cancelled", diagnosticsDeferred.isCancelled)
+    }
+
+    @Test
+    fun testServiceDiscoveryReadinessTimeoutTriggersSafeRecovery() {
+        val manager = createTestBleManager()
+        val mockGatt = mock(BluetoothGatt::class.java)
+        val mockDevice = mock(BluetoothDevice::class.java)
+        `when`(mockDevice.address).thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(mockGatt.device).thenReturn(mockDevice)
+
+        manager.setActiveGattForTesting(mockGatt)
+        manager.setLastConnectedAddressForTesting("AA:BB:CC:DD:EE:FF")
+        manager.setAutoReconnectEnabled(true)
+
+        // Trigger service readiness timeout safe recovery
+        manager.triggerServiceReadinessTimeoutImmediatelyForTesting(mockGatt)
+
+        // Verify safe recovery executed: transport torn down without marking user-initiated
+        assertFalse("Timeout safe recovery must NOT mark userInitiatedDisconnect", manager.isUserInitiatedDisconnect())
+        assertNull("Active GATT must be cleared by teardown", manager.getActiveGatt())
+        assertTrue("Auto-reconnect should be scheduled on timeout", manager.isReconnecting.value)
+        assertEquals(1, manager.getReconnectAttempts())
+        assertTrue(
+            "Connection error must state readiness timed out",
+            manager.connectionError.value?.contains("timed out") == true
+        )
+    }
+
+    @Test
+    fun testReadinessCancelsReadinessTimeout() {
+        val manager = createTestBleManager()
+        val mockGatt = mock(BluetoothGatt::class.java)
+        val mockDevice = mock(BluetoothDevice::class.java)
+        `when`(mockDevice.address).thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(mockGatt.device).thenReturn(mockDevice)
+
+        manager.setActiveGattForTesting(mockGatt)
+        manager.setLastConnectedAddressForTesting("AA:BB:CC:DD:EE:FF")
+
+        manager.triggerStartServiceReadinessTimeoutJobForTesting(mockGatt)
+        assertNotNull("Service readiness timeout job must be active", manager.getServiceReadinessTimeoutJob())
+
+        // Simulate readiness achieved before timeout (e.g. telemetry arrives)
+        manager.triggerCancelServiceReadinessTimeoutForTesting()
+        assertNull("Service readiness timeout job must be cancelled", manager.getServiceReadinessTimeoutJob())
+        assertEquals("Active GATT should remain intact", mockGatt, manager.getActiveGatt())
     }
 }
