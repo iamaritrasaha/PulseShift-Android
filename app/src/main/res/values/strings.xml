@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">PulseShift</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_lighting">Lighting</string>
+    <string name="nav_presets">Presets</string>
+    <string name="nav_devices">Devices</string>
+    <string name="nav_settings">Settings</string>
+    <string name="demo_mode_badge">Demo Mode</string>
+    <string name="target_motorcycle">2025 Bajaj Pulsar NS125 ABS</string>
+    <string name="unverified_rpm_notice">Simulated RPM Only. Live RPM acquisition is not yet verified for this motorcycle.</string>
+</resources>

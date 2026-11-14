@@ -1,0 +1,13 @@
+package com.pulseshift.app.domain.model
+
+enum class AuthState {
+    NOT_ENROLLED,
+    BOOT_AUTHORIZATION_REQUIRED,
+    ENROLLING,
+    ENROLLED,
+    AUTHENTICATING,
+    AUTHENTICATED,
+    SESSION_EXPIRED,
+    AUTHENTICATION_REJECTED,
+    RECOVERY_REQUIRED
+}
