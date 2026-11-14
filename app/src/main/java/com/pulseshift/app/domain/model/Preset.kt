@@ -5,7 +5,7 @@ data class Preset(
     val name: String,
     val effect: EffectType,
     val ledColors: List<RgbColor>,
-    val brightness: Int = 200,
+    val brightness: Int = 255,
     val effectSpeed: Int = 50,
     val ledDirection: Int = 0,
     val startupAnimation: StartupAnimation = StartupAnimation.SWEEP,
@@ -19,7 +19,7 @@ data class Preset(
             Preset(
                 id = "preset_brand",
                 name = "PulseShift Tachometer (1k-6k)",
-                effect = EffectType.RPM_BAR,
+                effect = EffectType.PROVISIONAL_PREVIEW,
                 ledColors = listOf(
                     RgbColor.NeonGreen,
                     RgbColor.NeonGreen,
@@ -28,7 +28,7 @@ data class Preset(
                     RgbColor.SunsetOrange,
                     RgbColor.RacingRed
                 ),
-                brightness = 220,
+                brightness = 255,
                 effectSpeed = 50,
                 shiftLightConfig = ShiftLightConfig(
                     thresholds = listOf(1000, 2000, 3000, 4000, 5000, 6000),
@@ -56,7 +56,7 @@ data class Preset(
                     RgbColor(139, 92, 246),
                     RgbColor(168, 85, 247)
                 ),
-                brightness = 220,
+                brightness = 255,
                 effectSpeed = 45
             ),
             Preset(
@@ -71,7 +71,7 @@ data class Preset(
                     RgbColor(67, 56, 202),
                     RgbColor(99, 102, 241)
                 ),
-                brightness = 210,
+                brightness = 255,
                 effectSpeed = 55
             ),
             Preset(
@@ -86,7 +86,7 @@ data class Preset(
                     RgbColor(168, 85, 247),
                     RgbColor(139, 92, 246)
                 ),
-                brightness = 230,
+                brightness = 255,
                 effectSpeed = 40
             ),
             Preset(
@@ -116,7 +116,7 @@ data class Preset(
                     RgbColor(59, 130, 246),
                     RgbColor(139, 92, 246)
                 ),
-                brightness = 200,
+                brightness = 255,
                 effectSpeed = 60
             )
         )

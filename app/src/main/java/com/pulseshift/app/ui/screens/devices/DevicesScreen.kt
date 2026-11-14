@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,22 +108,27 @@ fun DevicesScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.SmallLabel),
-            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
+                .padding(innerPadding),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = PulseShiftSpacing.ScreenHorizontal,
+                end = PulseShiftSpacing.ScreenHorizontal,
+                top = PulseShiftSpacing.ScreenVertical,
+                bottom = PulseShiftSpacing.BottomScrollPadding
+            ),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
         ) {
             // Hardware Bluetooth Connection State Pipeline Banner
             item {
                 Card(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = PulseShiftShapeTokens.Card,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
+                        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
                     ) {
                         Text(
                             text = "Physical Hardware Interface",
@@ -172,7 +179,7 @@ fun DevicesScreen(
                     if (connectionState != BleConnectionState.SCANNING) {
                         FilledTonalButton(
                             onClick = { viewModel.startScan() },
-                            shape = RoundedCornerShape(12.dp)
+                            shape = PulseShiftShapeTokens.Control
                         ) {
                             Text("Scan Now")
                         }
@@ -184,31 +191,23 @@ fun DevicesScreen(
             if (discoveredDevices.isEmpty()) {
                 item {
                     Card(
-                        shape = RoundedCornerShape(18.dp),
+                        shape = PulseShiftShapeTokens.Card,
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(24.dp),
+                                .padding(PulseShiftSpacing.SectionSpacing),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF101014))
-                                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
-                                    contentDescription = "PulseShift",
-                                    modifier = Modifier.size(44.dp)
-                                )
-                            }
+                            Icon(
+                                Icons.Rounded.Bluetooth,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                            )
                             Text(
                                 text = if (connectionState == BleConnectionState.SCANNING) "Scanning for PulseShift controllers (UUID fe12d210-...)..." else "No PulseShift controllers found nearby. Tap 'Scan Now' to discover.",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -333,13 +332,13 @@ fun OwnerEnrollmentCard(
     }
 
     Card(
-        shape = RoundedCornerShape(18.dp),
+        shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
         ) {
             Text("Owner Authentication", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -353,9 +352,17 @@ fun OwnerEnrollmentCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { confirmEnrollment = true }) { Text("Enroll as Owner") }
-                OutlinedButton(onClick = onAuthenticate) { Text("Re-authenticate") }
+            Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
+                Button(
+                    onClick = { confirmEnrollment = true },
+                    shape = PulseShiftShapeTokens.Control,
+                    modifier = Modifier.height(38.dp)
+                ) { Text("Enroll as Owner") }
+                OutlinedButton(
+                    onClick = onAuthenticate,
+                    shape = PulseShiftShapeTokens.Control,
+                    modifier = Modifier.height(38.dp)
+                ) { Text("Re-authenticate") }
             }
 
             enrollmentMessage?.let { message ->
@@ -372,20 +379,20 @@ fun ConnectedDeviceCard(
     onDisconnect: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                     Box(
                         modifier = Modifier
                             .size(38.dp)
@@ -406,7 +413,10 @@ fun ConnectedDeviceCard(
                     }
                 }
 
-                IconButton(onClick = onDisconnect) {
+                IconButton(
+                    onClick = onDisconnect,
+                    modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+                ) {
                     Icon(Icons.Rounded.Close, contentDescription = "Disconnect")
                 }
             }
@@ -466,14 +476,14 @@ fun DiscoveredDeviceItem(
     onConnect: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(PulseShiftSpacing.CardPaddingCompact),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -484,7 +494,8 @@ fun DiscoveredDeviceItem(
 
             Button(
                 onClick = onConnect,
-                shape = RoundedCornerShape(12.dp)
+                shape = PulseShiftShapeTokens.Control,
+                modifier = Modifier.height(38.dp)
             ) {
                 Text("Connect")
             }

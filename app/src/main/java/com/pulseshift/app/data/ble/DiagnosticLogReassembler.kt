@@ -16,8 +16,12 @@ import java.util.concurrent.ConcurrentHashMap
 
 class DiagnosticLogReassembler {
 
-    private val _completedMessages = MutableSharedFlow<DiagnosticLogMessage>(extraBufferCapacity = 64)
+    private val _completedMessages = MutableSharedFlow<DiagnosticLogMessage>(replay = 1, extraBufferCapacity = 64)
     val completedMessages: SharedFlow<DiagnosticLogMessage> = _completedMessages.asSharedFlow()
+
+    fun emitDirectMessage(message: DiagnosticLogMessage) {
+        _completedMessages.tryEmit(message)
+    }
 
     private val _pageEndEvents = MutableSharedFlow<HistoricalPageEnd>(extraBufferCapacity = 16)
     val pageEndEvents: SharedFlow<HistoricalPageEnd> = _pageEndEvents.asSharedFlow()

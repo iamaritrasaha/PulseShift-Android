@@ -43,8 +43,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.size
 import com.pulseshift.app.ui.components.StatusPill
-import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 private val LIGHTING_TABS = listOf("Colors", "Effects", "RPM Bar", "Startup")
 
@@ -96,6 +98,7 @@ fun LightingScreen(
     if (showSavePresetDialog) {
         AlertDialog(
             onDismissRequest = { showSavePresetDialog = false },
+            shape = PulseShiftShapeTokens.Modal,
             title = { Text("Save Current Setup as Preset") },
             text = {
                 Column {
@@ -110,6 +113,7 @@ fun LightingScreen(
                         onValueChange = { newPresetName = it },
                         label = { Text("Preset Name") },
                         singleLine = true,
+                        shape = PulseShiftShapeTokens.Control,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -240,9 +244,10 @@ fun LightingScreen(
                     Button(
                         onClick = { viewModel.saveToController() },
                         enabled = !isBusy,
+                        shape = PulseShiftShapeTokens.Control,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(PulseShiftSpacing.MinTouchTarget)
                     ) {
                         if (isBusy) {
                             CircularProgressIndicator(
@@ -270,14 +275,16 @@ fun LightingScreen(
                                 newPresetName = "Custom Preset ${System.currentTimeMillis() % 1000}"
                                 showSavePresetDialog = true
                             },
+                            shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
                         ) {
-                            Text("Save Preset", maxLines = 1)
+                            Text("Save as Preset", maxLines = 1)
                         }
                         OutlinedButton(
                             onClick = onNavigateToPresets,
+                            shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
@@ -292,14 +299,16 @@ fun LightingScreen(
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.reloadFromController() },
+                            shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
                         ) {
-                            Text("Restore Saved", maxLines = 1)
+                            Text("Reload from ESP32", maxLines = 1)
                         }
                         OutlinedButton(
                             onClick = { confirmReset = true },
+                            shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)

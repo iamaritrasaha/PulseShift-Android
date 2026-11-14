@@ -46,6 +46,8 @@ import com.pulseshift.app.ui.components.StepperControl
 import com.pulseshift.app.ui.theme.HardwareRedError
 import com.pulseshift.app.ui.theme.PulseShiftMonoMedium
 import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 /** Color tab: global color when "All LEDs" is selected, per-LED otherwise. */
@@ -196,11 +198,12 @@ fun RpmBarPanel(
             config.thresholds.forEachIndexed { index, rpm ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = PulseShiftShapeTokens.Card,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     )
                 ) {
-                    Column(modifier = Modifier.padding(PulseShiftSpacing.RelatedControls)) {
+                    Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -223,11 +226,12 @@ fun RpmBarPanel(
 
             if (!config.isStrictlyAscending()) {
                 Card(
+                    shape = PulseShiftShapeTokens.Card,
                     colors = CardDefaults.cardColors(containerColor = HardwareRedError.copy(alpha = 0.15f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.padding(PulseShiftSpacing.RelatedControls),
+                        modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Rounded.Warning, contentDescription = null, tint = HardwareRedError)

@@ -63,6 +63,9 @@ import androidx.compose.ui.unit.dp
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
+import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.util.Locale
 
@@ -91,32 +94,13 @@ fun RpmScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF101014))
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
-                                contentDescription = "PulseShift",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        Column {
-                            Text("RPM & Calibration", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = "CAN ID 0x301 · 6-LED Thresholds",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    Column {
+                        Text("RPM & Calibration", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "CAN ID 0x301 · 6-LED Thresholds",
+                            style = PulseShiftMonoTiny,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 },
                 navigationIcon = {
@@ -131,7 +115,7 @@ fun RpmScreen(
                     if (hasUnsavedChanges) {
                         FilledTonalButton(
                             onClick = { viewModel.saveToController() },
-                            shape = RoundedCornerShape(12.dp),
+                            shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier.padding(end = 8.dp)
                         ) {
                             Text("Save to ESP32", style = MaterialTheme.typography.labelSmall)
@@ -150,7 +134,8 @@ fun RpmScreen(
             TabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = MaterialTheme.colorScheme.background,
-                contentColor = MaterialTheme.colorScheme.primary
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = PulseShiftSpacing.ScreenHorizontal)
             ) {
                 Tab(
                     selected = selectedTab == 0,
@@ -212,18 +197,19 @@ fun BasicRpmView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical)
+            .padding(bottom = PulseShiftSpacing.BottomScrollPadding),
+        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         // Primary Estimated RPM Display Card
         Card(
-            shape = RoundedCornerShape(20.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
+                verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -259,16 +245,16 @@ fun BasicRpmView(
 
         // Calibration Verification Badge Card
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(
                 containerColor = if (isVerified) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(PulseShiftSpacing.CardPadding),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
             ) {
                 Icon(
                     imageVector = if (isVerified) Icons.Rounded.CheckCircle else Icons.Rounded.Info,
@@ -291,11 +277,11 @@ fun BasicRpmView(
 
         // Active Candidate Summary
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
                 Text("Current Active Decoder Parameters", style = MaterialTheme.typography.titleSmall)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("CAN Candidate ID", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -343,11 +329,11 @@ fun ThresholdSliderCard(
     var localRpm by remember(rpm) { mutableFloatStateOf(rpm.toFloat()) }
 
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(PulseShiftSpacing.RelatedControls), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -405,11 +391,12 @@ fun AdvancedCalibrationView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.ScreenVertical)
+            .padding(bottom = PulseShiftSpacing.BottomScrollPadding),
+        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SectionSpacing)
     ) {
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = PulseShiftShapeTokens.Card,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
         ) {

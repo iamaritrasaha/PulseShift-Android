@@ -82,6 +82,11 @@ import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
 import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material3.FilledTonalButton
+import com.pulseshift.app.ui.theme.PulseShiftRadius
+import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PresetsScreen(
@@ -102,46 +107,67 @@ fun PresetsScreen(
         viewModel.userMessage.collect { snackbar.showSnackbar(it) }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                title = { Text("Presets Library", style = MaterialTheme.typography.titleLarge) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Navigate Back")
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { showRestoreDialog = true },
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.Rounded.RestartAlt, contentDescription = "Restore Factory Defaults")
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateSheet = true },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = "Create Custom Preset")
-            }
-        }
-    ) { innerPadding ->
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+            modifier = Modifier.fillMaxSize()
         ) {
             if (isBusy) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            // Top Header: Title & Action Controls (Owned cleanly inside screen, no double top-bar)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PulseShiftSpacing.ScreenHorizontal,
+                        end = PulseShiftSpacing.ScreenHorizontal,
+                        top = PulseShiftSpacing.ScreenVertical,
+                        bottom = PulseShiftSpacing.SmallGap
+                    ),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Presets Library",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(PulseShiftSpacing.Micro))
+                    Text(
+                        text = "Custom shift patterns and color profiles",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = { showRestoreDialog = true },
+                        shape = PulseShiftShapeTokens.Control,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(PulseShiftSpacing.Micro))
+                        Text("Defaults", style = MaterialTheme.typography.labelSmall)
+                    }
+
+                    Button(
+                        onClick = { showCreateSheet = true },
+                        shape = PulseShiftShapeTokens.Control,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(PulseShiftSpacing.Micro))
+                        Text("New", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
 
             if (presets.isEmpty()) {
@@ -155,26 +181,22 @@ fun PresetsScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF101014))
-                                .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
-                                contentDescription = "PulseShift",
-                                modifier = Modifier.size(54.dp)
-                            )
-                        }
+                        Icon(
+                            Icons.Rounded.Bookmarks,
+                            contentDescription = null,
+                            modifier = Modifier.size(56.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        )
                         Text(
                             "No presets stored",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Button(onClick = { viewModel.restoreDefaults() }) {
+                        Button(
+                            onClick = { viewModel.restoreDefaults() },
+                            shape = PulseShiftShapeTokens.Control,
+                            modifier = Modifier.height(PulseShiftSpacing.MinTouchTarget)
+                        ) {
                             Text("Load Shipped Defaults")
                         }
                     }
@@ -185,8 +207,8 @@ fun PresetsScreen(
                     contentPadding = PaddingValues(
                         start = PulseShiftSpacing.ScreenHorizontal,
                         end = PulseShiftSpacing.ScreenHorizontal,
-                        top = PulseShiftSpacing.CardPadding,
-                        bottom = 88.dp // Space for FAB
+                        top = PulseShiftSpacing.SmallGap,
+                        bottom = PulseShiftSpacing.BottomScrollPadding
                     ),
                     verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
                 ) {
@@ -209,6 +231,13 @@ fun PresetsScreen(
                 }
             }
         }
+
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        )
     }
 
     // Rename Dialog
@@ -448,7 +477,7 @@ private fun CreatePresetSheet(
 ) {
     var name by remember { mutableStateOf("Custom Preset") }
     var selectedEffect by remember { mutableStateOf(EffectType.STATIC) }
-    var brightness by remember { mutableIntStateOf(220) }
+    var brightness by remember { mutableIntStateOf(255) } // Standard 100% brightness default
     var speed by remember { mutableIntStateOf(50) }
     var selectedPaletteIndex by remember { mutableIntStateOf(0) }
 
@@ -469,7 +498,8 @@ private fun CreatePresetSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = PulseShiftRadius.Modal, topEnd = PulseShiftRadius.Modal)
     ) {
         Column(
             modifier = Modifier
@@ -485,7 +515,8 @@ private fun CreatePresetSheet(
                 onValueChange = { name = it },
                 label = { Text("Preset Name") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = PulseShiftShapeTokens.Control
             )
 
             Text("Effect Pattern", style = MaterialTheme.typography.labelMedium)
@@ -510,6 +541,7 @@ private fun CreatePresetSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { selectedPaletteIndex = idx },
+                        shape = PulseShiftShapeTokens.Card,
                         colors = CardDefaults.cardColors(
                             containerColor = if (selectedPaletteIndex == idx)
                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)

@@ -26,8 +26,15 @@ class PresetsViewModel(
     private val _userMessage = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
 
+    private val _persistenceError = MutableStateFlow<String?>(null)
+    val persistenceError: StateFlow<String?> = _persistenceError.asStateFlow()
+
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
+
+    fun clearPersistenceError() {
+        _persistenceError.value = null
+    }
 
     fun applyPreset(preset: Preset) {
         viewModelScope.launch {
@@ -47,7 +54,7 @@ class PresetsViewModel(
         name: String,
         effect: EffectType,
         colors: List<RgbColor>,
-        brightness: Int,
+        brightness: Int = 255,
         speed: Int,
         shiftConfig: ShiftLightConfig? = null
     ) {
@@ -63,45 +70,81 @@ class PresetsViewModel(
             createdAt = System.currentTimeMillis()
         )
         viewModelScope.launch {
-            repository.savePreset(newPreset)
-            _userMessage.tryEmit("Saved preset '${newPreset.name}'")
+            try {
+                repository.savePreset(newPreset)
+                _persistenceError.value = null
+                _userMessage.tryEmit("Saved preset '${newPreset.name}'")
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to persist preset"
+                _userMessage.tryEmit("Failed to save preset: ${e.message}")
+            }
         }
     }
 
     fun duplicatePreset(preset: Preset) {
         viewModelScope.launch {
-            val copy = repository.duplicatePreset(preset)
-            if (copy != null) {
-                _userMessage.tryEmit("Created '${copy.name}'")
+            try {
+                val copy = repository.duplicatePreset(preset)
+                if (copy != null) {
+                    _persistenceError.value = null
+                    _userMessage.tryEmit("Created '${copy.name}'")
+                }
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to duplicate preset"
+                _userMessage.tryEmit("Failed to duplicate preset: ${e.message}")
             }
         }
     }
 
     fun renamePreset(preset: Preset, newName: String) {
         viewModelScope.launch {
-            repository.updatePreset(preset.copy(name = newName.ifBlank { preset.name }))
-            _userMessage.tryEmit("Renamed to '$newName'")
+            try {
+                repository.updatePreset(preset.copy(name = newName.ifBlank { preset.name }))
+                _persistenceError.value = null
+                _userMessage.tryEmit("Renamed to '$newName'")
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to rename preset"
+                _userMessage.tryEmit("Failed to rename preset: ${e.message}")
+            }
         }
     }
 
     fun updatePreset(preset: Preset) {
         viewModelScope.launch {
-            repository.updatePreset(preset)
-            _userMessage.tryEmit("Updated preset '${preset.name}'")
+            try {
+                repository.updatePreset(preset)
+                _persistenceError.value = null
+                _userMessage.tryEmit("Updated preset '${preset.name}'")
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to update preset"
+                _userMessage.tryEmit("Failed to update preset: ${e.message}")
+            }
         }
     }
 
     fun deletePreset(id: String) {
         viewModelScope.launch {
-            repository.deletePreset(id)
-            _userMessage.tryEmit("Preset deleted")
+            try {
+                repository.deletePreset(id)
+                _persistenceError.value = null
+                _userMessage.tryEmit("Preset deleted")
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to delete preset"
+                _userMessage.tryEmit("Failed to delete preset: ${e.message}")
+            }
         }
     }
 
     fun restoreDefaults() {
         viewModelScope.launch {
-            repository.restoreDefaultPresets()
-            _userMessage.tryEmit("Restored factory presets")
+            try {
+                repository.restoreDefaultPresets()
+                _persistenceError.value = null
+                _userMessage.tryEmit("Restored factory presets")
+            } catch (e: Exception) {
+                _persistenceError.value = e.message ?: "Failed to restore factory presets"
+                _userMessage.tryEmit("Failed to restore factory presets: ${e.message}")
+            }
         }
     }
 }
