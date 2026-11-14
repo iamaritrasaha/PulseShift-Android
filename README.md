@@ -231,7 +231,7 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 4. Connect to PulseShift via BLE and authenticate your owner session.
 5. Navigate to **Settings → Firmware & Updates**.
 6. Tap **Flash .bin** and select `PulseShift_signed.bin`.
-7. The app verifies the binary header magic (`0xE7`), validates size limits (64 KB - 1.25 MB), checks the `PSOT` trailer, and streams the signed binary.
+7. The app verifies the binary header magic (`0xE9`), validates size limits (64 KB - 1.25 MB), checks the `PSOT` trailer, and streams the signed binary.
 8. Once streaming finishes, the ESP32 verifies checksums and ECDSA signature, swaps the active boot partition, and reboots.
 9. The app awaits BLE reconnection and confirms that the new firmware version is active on the target slot before reporting success.
 
