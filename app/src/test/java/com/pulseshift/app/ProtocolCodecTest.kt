@@ -2,114 +2,137 @@ package com.pulseshift.app
 
 import com.pulseshift.app.data.ble.PulseShiftBleProtocol
 import com.pulseshift.app.domain.model.EffectType
-import com.pulseshift.app.domain.model.RgbColor
-import com.pulseshift.app.domain.model.WarningStyle
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Contract tests for the firmware protocol additions the app must stay in
+ * sync with: 0x54 SET_CAPTURE_STAGE, 0x55 SET_LED_TEST_RPM (firmware 2.2.0),
+ * the effect 5 provisional preview id, capability feature bits 15/16, and
+ * the strict V2 result-payload validation.
+ */
 class ProtocolCodecTest {
 
-    @Test
-    fun testBuildSetPowerCommand() {
-        val frameOn = PulseShiftBleProtocol.buildSetPower(true, 5.toByte())
-        assertEquals(0x01.toByte(), frameOn[0]) // Version
-        assertEquals(PulseShiftBleProtocol.CMD_SET_POWER, frameOn[1]) // Opcode
-        assertEquals(5.toByte(), frameOn[2]) // Sequence
-        assertEquals(1.toByte(), frameOn[3]) // Length
-        assertEquals(1.toByte(), frameOn[4]) // Payload
-
-        val frameOff = PulseShiftBleProtocol.buildSetPower(false, 6.toByte())
-        assertEquals(0.toByte(), frameOff[4])
+    private fun v2Ack(opcode: Byte, seq: Int, status: Byte, payload: ByteArray = ByteArray(0)): ByteArray {
+        val out = ByteArray(11 + payload.size)
+        out[0] = 0x02
+        out[1] = opcode
+        out[2] = (seq and 0xFF).toByte()
+        out[3] = ((seq shr 8) and 0xFF).toByte()
+        out[4] = status
+        out[5] = 0x04 // APPLIED
+        out[6] = 7; out[7] = 0; out[8] = 0; out[9] = 0 // revision 7
+        out[10] = payload.size.toByte()
+        System.arraycopy(payload, 0, out, 11, payload.size)
+        return out
     }
 
     @Test
-    fun testBuildSetBrightnessCommand() {
-        val frame = PulseShiftBleProtocol.buildSetBrightness(204, 7.toByte())
-        assertEquals(PulseShiftBleProtocol.CMD_SET_BRIGHTNESS, frame[1])
-        assertEquals(7.toByte(), frame[2])
-        assertEquals(1.toByte(), frame[3])
-        assertEquals(204.toByte(), frame[4])
+    fun `set capture stage encodes opcode 0x54 with one payload byte`() {
+        val frame = PulseShiftBleProtocol.buildSetCaptureStageV2(42, 2)
+        assertEquals(0x02, frame[0])
+        assertEquals(0x54.toByte(), frame[1])
+        assertEquals(42, (frame[2].toInt() and 0xFF) or ((frame[3].toInt() and 0xFF) shl 8))
+        assertEquals(1, frame[4].toInt())
+        assertEquals(2, frame[5].toInt() and 0xFF)
     }
 
     @Test
-    fun testBuildSetRpmThresholds12BytesLittleEndian() {
-        val thresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000)
-        val frame = PulseShiftBleProtocol.buildSetRpmThresholds(thresholds, 8.toByte())
-        assertEquals(PulseShiftBleProtocol.CMD_SET_RPM_THRESHOLDS, frame[1])
-        assertEquals(12.toByte(), frame[3])
-
-        // 3000 = 0x0BB8 -> Low: 0xB8, High: 0x0B
-        assertEquals(0xB8.toByte(), frame[4])
-        assertEquals(0x0B.toByte(), frame[5])
-
-        // 8000 = 0x1F40 -> Low: 0x40, High: 0x1F
-        assertEquals(0x40.toByte(), frame[14])
-        assertEquals(0x1F.toByte(), frame[15])
+    fun `set capture stage clamps stage to the valid 1..3 range`() {
+        assertEquals(1, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 0)[5].toInt())
+        assertEquals(3, PulseShiftBleProtocol.buildSetCaptureStageV2(1, 4)[5].toInt())
     }
 
     @Test
-    fun testBuildSetShiftWarning() {
-        val frame = PulseShiftBleProtocol.buildSetShiftWarning(8500, WarningStyle.FLASH, 9.toByte())
-        assertEquals(PulseShiftBleProtocol.CMD_SET_SHIFT_WARNING, frame[1])
-        assertEquals(3.toByte(), frame[3])
-        // 8500 = 0x2134 -> Low: 0x34, High: 0x21
-        assertEquals(0x34.toByte(), frame[4])
-        assertEquals(0x21.toByte(), frame[5])
-        assertEquals(WarningStyle.FLASH.id.toByte(), frame[6])
+    fun `set led test rpm encodes opcode 0x55 with rpm u16 LE and enable`() {
+        val frame = PulseShiftBleProtocol.buildSetLedTestRpmV2(7, 4500, true)
+        assertEquals(0x55.toByte(), frame[1])
+        assertEquals(3, frame[4].toInt())
+        // 4500 = 0x1194
+        assertEquals(0x94.toByte(), frame[6])
+        assertEquals(0x11.toByte(), frame[7])
+        assertEquals(1, frame[8].toInt())
     }
 
     @Test
-    fun testBuildResetDefaults() {
-        val frame = PulseShiftBleProtocol.buildResetDefaults(10.toByte())
-        assertEquals(PulseShiftBleProtocol.CMD_RESET_DEFAULTS, frame[1])
-        assertEquals(1.toByte(), frame[3])
-        assertEquals(0xA5.toByte(), frame[4])
+    fun `set led test rpm disable sends zero rpm`() {
+        val frame = PulseShiftBleProtocol.buildSetLedTestRpmV2(8, 0, false)
+        assertEquals(0, frame[6].toInt())
+        assertEquals(0, frame[7].toInt())
+        assertEquals(0, frame[8].toInt())
     }
 
     @Test
-    fun testParseAckResponse() {
-        val ackBytes = byteArrayOf(0x01, 0x80.toByte(), 0x0C, 0x00, 0x00)
-        val ack = PulseShiftBleProtocol.parseAck(ackBytes)
-        assertNotNull(ack)
-        assertEquals(0x0C.toByte(), ack!!.sequenceRef)
-        assertEquals(PulseShiftBleProtocol.STATUS_SUCCESS, ack.statusCode)
-        assertTrue(ack.isSuccess)
+    fun `set led test rpm clamps to firmware max 20000`() {
+        val frame = PulseShiftBleProtocol.buildSetLedTestRpmV2(9, 25000, true)
+        val rpm = (frame[6].toInt() and 0xFF) or ((frame[7].toInt() and 0xFF) shl 8)
+        assertEquals(20000, rpm)
     }
 
     @Test
-    fun testParseStateNotificationValidChecksum() {
-        // Compute checksum for bytes 0..12:
-        val raw = byteArrayOf(
-            0x01, 0x81.toByte(), 0x00, 1, 200.toByte(), 2, 60,
-            139.toByte(), 92, 246.toByte(), 0, 0, 0
+    fun `effect 5 is the provisional preview and round-trips from id`() {
+        assertEquals(5, EffectType.PROVISIONAL_PREVIEW.id)
+        assertEquals(EffectType.PROVISIONAL_PREVIEW, EffectType.fromId(5))
+    }
+
+    @Test
+    fun `feature bits 15 and 16 map to capture stage and bench test`() {
+        val caps = PulseShiftBleProtocol.parseCapabilitiesV2(
+            byteArrayOf(
+                0x02, 6,
+                0x80.toByte(), 0x01, 0x00, 0x00, // featureMask = 0x180
+                0, 0, 0, 0, 0, 2
+            )
         )
-        var csum: Byte = 0
-        for (b in raw) {
-            csum = (csum.toInt() xor b.toInt()).toByte()
-        }
-        val stateBytes = raw + byteArrayOf(csum)
+        // 0x180 alone: capture stage bit set, bench test not.
+        assertTrue(caps!!.supportsCaptureStage)
+        assertFalse(caps.supportsLedBenchTest)
 
-        val state = PulseShiftBleProtocol.parseState(stateBytes)
-        assertNotNull(state)
-        assertTrue(state!!.isPowerOn)
-        assertEquals(200, state.brightness)
-        assertEquals(EffectType.RAINBOW, state.effect)
-        assertEquals(60, state.effectSpeed)
-        assertEquals(139, state.globalColor.red)
-        assertEquals(92, state.globalColor.green)
-        assertEquals(246, state.globalColor.blue)
+        val both = PulseShiftBleProtocol.parseCapabilitiesV2(
+            byteArrayOf(
+                0x02, 6,
+                0x80.toByte(), 0x01, 0x01, 0x00, // featureMask = 0x10180
+                0, 0, 0, 0, 0, 2
+            )
+        )
+        assertTrue(both!!.supportsCaptureStage)
+        assertTrue(both.supportsLedBenchTest)
     }
 
     @Test
-    fun testParseStateNotificationInvalidChecksum() {
-        val stateBytes = byteArrayOf(
-            0x01, 0x81.toByte(), 0x00, 1, 200.toByte(), 2, 60,
-            139.toByte(), 92, 246.toByte(), 0, 0, 0, 0x7F.toByte() // Wrong checksum
+    fun `config ack with oversized payload is rejected as malformed`() {
+        val ack = v2Ack(PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG, 12, 0x00, ByteArray(10))
+        assertNull(PulseShiftBleProtocol.parseConfigAck(ack))
+    }
+
+    @Test
+    fun `config ack with maximum 9-byte payload parses`() {
+        val payload = ByteArray(9) { it.toByte() }
+        val ack = PulseShiftBleProtocol.parseConfigAck(
+            v2Ack(PulseShiftBleProtocol.V2_OPCODE_CAL_COMPUTE, 13, 0x00, payload)
         )
-        val state = PulseShiftBleProtocol.parseState(stateBytes)
-        assertNull(state)
+        assertTrue(ack != null && ack.isSuccess)
+        assertEquals(9, ack!!.payload.size)
+        assertEquals(7L, ack.activeRevision)
+    }
+
+    @Test
+    fun `restore defaults keeps the explicit A5 5A confirmation`() {
+        val frame = PulseShiftBleProtocol.buildRestoreDefaultsV2(3)
+        assertEquals(0x21.toByte(), frame[1])
+        assertEquals(2, frame[4].toInt())
+        assertEquals(0xA5.toByte(), frame[6])
+        assertEquals(0x5A.toByte(), frame[7])
+    }
+
+    @Test
+    fun `restart device keeps the explicit A5 5A confirmation`() {
+        val frame = PulseShiftBleProtocol.buildRestartDeviceV2(4)
+        assertEquals(0x51.toByte(), frame[1])
+        assertEquals(0xA5.toByte(), frame[6])
+        assertEquals(0x5A.toByte(), frame[7])
     }
 }

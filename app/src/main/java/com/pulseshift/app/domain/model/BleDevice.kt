@@ -33,6 +33,8 @@ data class DeviceCapabilities(
     val supportsCalibrationWorkflow: Boolean = false,
     val supportsDiagnosticsTlv: Boolean = false,
     val supportsCaptureExport: Boolean = false,
+    val supportsCaptureStage: Boolean = false,
+    val supportsLedBenchTest: Boolean = false,
     val hasConfigV2Support: Boolean = false,
     val supportsLiveRpmVerified: Boolean = false
 ) {
@@ -74,21 +76,10 @@ data class DeviceCapabilities(
                 supportsCalibrationWorkflow = (mask and 0x1000) != 0,
                 supportsDiagnosticsTlv = (mask and 0x2000) != 0,
                 supportsCaptureExport = (mask and 0x4000) != 0,
+                supportsCaptureStage = (mask and 0x8000) != 0,
+                supportsLedBenchTest = (mask and 0x10000) != 0,
                 hasConfigV2Support = true,
                 supportsLiveRpmVerified = false
-            )
-        }
-
-        fun fromBitmask(mask: Int): DeviceCapabilities {
-            return DeviceCapabilities(
-                physicalLedCount = 6,
-                supportsIndividualRgb = (mask and 0x0002) != 0,
-                supportsEffects = (mask and 0x0004) != 0,
-                supportsNvsPersistence = (mask and 0x0008) != 0,
-                supportsStartupAnimation = (mask and 0x0010) != 0,
-                supportsRpmThresholds = (mask and 0x0020) != 0,
-                supportsLiveRpmVerified = (mask and 0x0040) != 0,
-                hasConfigV2Support = false
             )
         }
     }

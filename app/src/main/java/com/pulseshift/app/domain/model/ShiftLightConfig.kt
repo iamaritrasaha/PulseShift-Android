@@ -3,7 +3,8 @@ package com.pulseshift.app.domain.model
 enum class WarningStyle(val id: Int, val label: String) {
     FLASH(0, "Fast Flash (10Hz)"),
     STROBE(1, "Strobe Blink (20Hz)"),
-    SOLID(2, "Solid Over-rev")
+    SOLID(2, "Solid Over-rev"),
+    OFF(3, "Shift Alert Off")
 }
 
 data class ShiftLightConfig(

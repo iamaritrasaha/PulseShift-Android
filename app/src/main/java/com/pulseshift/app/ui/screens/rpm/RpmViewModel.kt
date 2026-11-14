@@ -11,6 +11,7 @@ import com.pulseshift.app.domain.model.ShiftLightConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class RpmViewModel(
@@ -72,10 +73,19 @@ class RpmViewModel(
 
     fun captureCalibrationPoint(refRpm: Int) {
         viewModelScope.launch {
-            repository.startCalibrationCapture()
-            // The firmware samples raw values for 2 seconds; wait out the
-            // window before committing the reference point.
-            kotlinx.coroutines.delay(2100)
+            if (!repository.startCalibrationCapture()) {
+                _calibrationStatus.value = repository.queryCalibrationStatus()
+                return@launch
+            }
+            // Poll the real capture window (CAL_CAPTURE_STATUS gives samples
+            // and elapsed ms) instead of a blind fixed sleep; commit only
+            // when the window has actually closed.
+            val deadline = System.currentTimeMillis() + 5000L
+            while (System.currentTimeMillis() < deadline) {
+                delay(200)
+                val status = repository.queryCalibrationStatus() ?: break
+                if (!status.captureActive) break
+            }
             repository.commitCalibrationPoint(refRpm)
             _calibrationStatus.value = repository.queryCalibrationStatus()
         }

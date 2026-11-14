@@ -3,42 +3,47 @@ package com.pulseshift.app.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ============================================================================
-// 60/30/10 Design System Color Palette for PulseShift
-// 60% Base Canvas  : Deep Graphite Night (#0F1015) / Slate Light (#F8FAFC)
-// 30% Structural   : Card Containers (#1B1D26), Surface Panels (#161820), Borders (#2B2E3D)
-// 10% Focal Accent : Electric Violet (#8B5CF6 / #A78BFA), Cyber Cyan (#06B6D4)
+// PulseShift Design System — restrained instrument-panel palette.
+// 60% deep charcoal canvas, 30% neutral structural surfaces, 10% amber focus.
+// Semantic green/amber/red/cyan are reserved for device state, never decoration.
 // ============================================================================
 
-// --- 60% Canvas & 30% Structure (Dark Theme) ---
-val Dark60CanvasBackground = Color(0xFF0F1015)
-val Dark30CardContainer = Color(0xFF1B1D26)
-val Dark30CardContainerVariant = Color(0xFF222531)
-val Dark30BorderDivider = Color(0xFF2B2E3D)
-val DarkTextPrimary = Color(0xFFF3F4F6)
-val DarkTextSecondary = Color(0xFF9CA3AF)
+// --- 60% canvas + 30% structure (dark) ---
+val Dark60CanvasBackground = Color(0xFF0B0D12)
+val Dark30CardContainer = Color(0xFF14171F)
+val Dark30CardContainerVariant = Color(0xFF1C202B)
+val Dark30BorderDivider = Color(0xFF2A2F3D)
+val DarkTextPrimary = Color(0xFFF2F4F8)
+val DarkTextSecondary = Color(0xFF9AA3B2)
+val DarkTextTertiary = Color(0xFF6B7280)
 
-// --- 60% Canvas & 30% Structure (Light Theme) ---
-val Light60CanvasBackground = Color(0xFFF8FAFC)
+// --- 60% canvas + 30% structure (light) ---
+val Light60CanvasBackground = Color(0xFFF4F5F7)
 val Light30CardContainer = Color(0xFFFFFFFF)
-val Light30CardContainerVariant = Color(0xFFF1F5F9)
-val Light30BorderDivider = Color(0xFFE2E8F0)
-val LightTextPrimary = Color(0xFF0F172A)
-val LightTextSecondary = Color(0xFF64748B)
+val Light30CardContainerVariant = Color(0xFFEAEDF1)
+val Light30BorderDivider = Color(0xFFDCE1E7)
+val LightTextPrimary = Color(0xFF16191F)
+val LightTextSecondary = Color(0xFF5C6470)
+val LightTextTertiary = Color(0xFF98A1AE)
 
-// --- 10% Focal Accent Colors (Shared & Dynamic Focal Points) ---
-val AccentVioletPrimary = Color(0xFFA78BFA)
-val AccentVioletOnPrimary = Color(0xFF1E1035)
-val AccentVioletContainer = Color(0xFF2E1065)
-val AccentVioletOnContainer = Color(0xFFDDD6FE)
+// --- 10% focus accent: restrained amber ---
+val AccentAmber = Color(0xFFFFB35C)
+val AccentAmberOn = Color(0xFF3D2500)
+val AccentAmberContainer = Color(0xFF4A2E00)
+val AccentAmberOnContainer = Color(0xFFFFD9A0)
 
-val AccentCyanSecondary = Color(0xFF06B6D4)
-val AccentCyanOnSecondary = Color(0xFF003640)
-val AccentCyanContainer = Color(0xFF083344)
-val AccentCyanOnContainer = Color(0xFFCFFAFE)
+// --- Light-theme amber (darker for contrast on white surfaces) ---
+val AccentAmberLight = Color(0xFF8C5A0C)
+val AccentAmberOnLight = Color(0xFFFFFFFF)
+val AccentAmberContainerLight = Color(0xFFFFDDB0)
+val AccentAmberOnContainerLight = Color(0xFF2C1A00)
 
-// Semantic Hardware State Colors
-val HardwareGreenVerified = Color(0xFF10B981)
-val HardwareAmberWarning = Color(0xFFF59E0B)
-val HardwareRedError = Color(0xFFEF4444)
-val HardwareCyanActive = Color(0xFF06B6D4)
-val HardwareInactiveOff = Color(0xFF3F3F46)
+// --- Teal: reserved for "device active/connected" hardware state ---
+val HardwareTealActive = Color(0xFF2DD4BF)
+
+// --- Semantic hardware state colors (state only, never decoration) ---
+val HardwareGreenVerified = Color(0xFF34D399)
+val HardwareAmberWarning = Color(0xFFFBBF24)
+val HardwareRedError = Color(0xFFF87171)
+val HardwareCyanActive = Color(0xFF38BDF8)
+val HardwareInactiveOff = Color(0xFF3F4654)

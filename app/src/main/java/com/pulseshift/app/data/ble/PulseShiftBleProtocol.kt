@@ -2,9 +2,7 @@ package com.pulseshift.app.data.ble
 
 import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.DeviceCapabilities
-import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HealthFlags
-import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmStatusFlags
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -24,12 +22,6 @@ object PulseShiftBleProtocol {
     val CONFIG_RESULT_CHAR_UUID: UUID = UUID.fromString("fe12d216-3d4f-4b9d-a21c-92782ecb4000")
     val CONFIG_SNAPSHOT_CHAR_UUID: UUID = UUID.fromString("fe12d217-3d4f-4b9d-a21c-92782ecb4000")
     val CAPABILITIES_CHAR_UUID: UUID = UUID.fromString("fe12d218-3d4f-4b9d-a21c-92782ecb4000")
-
-    // Legacy / Lighting Service UUIDs for compatibility
-    val LEGACY_SERVICE_UUID: UUID = UUID.fromString("7f4bd000-6fb1-4db9-9214-3ee4e7e49210")
-    val COMMAND_CHAR_UUID: UUID = UUID.fromString("7f4bd001-6fb1-4db9-9214-3ee4e7e49210")
-    val STATE_CHAR_UUID: UUID = UUID.fromString("7f4bd002-6fb1-4db9-9214-3ee4e7e49210")
-    val DEVICE_INFO_CHAR_UUID: UUID = UUID.fromString("7f4bd003-6fb1-4db9-9214-3ee4e7e49210")
 
     const val PROTOCOL_VERSION: Byte = 0x01
     const val PROTOCOL_V2_VERSION: Byte = 0x02
@@ -76,28 +68,14 @@ object PulseShiftBleProtocol {
     const val V2_OPCODE_RESTART_DEVICE: Byte = 0x51
     const val V2_OPCODE_CLEAR_DIAGNOSTICS: Byte = 0x52
     const val V2_OPCODE_SET_CAPTURE_RECORDING: Byte = 0x53
+    const val V2_OPCODE_SET_CAPTURE_STAGE: Byte = 0x54
+    const val V2_OPCODE_SET_LED_TEST_RPM: Byte = 0x55
 
     // Control Request Opcodes (V1 Protocol)
     const val CONTROL_OPCODE_FETCH_HISTORICAL_LOG: Byte = 0x10
     const val CONTROL_OPCODE_CANCEL_HISTORICAL_LOG: Byte = 0x11
     const val CONTROL_OPCODE_FETCH_CAPTURE_PAGE: Byte = 0x12
     const val CONTROL_OPCODE_CANCEL_CAPTURE: Byte = 0x13
-
-    // Lighting Opcodes (Compatibility)
-    const val CMD_SET_POWER: Byte = 0x01
-    const val CMD_SET_BRIGHTNESS: Byte = 0x02
-    const val CMD_SET_EFFECT: Byte = 0x03
-    const val CMD_SET_GLOBAL_COLOR: Byte = 0x04
-    const val CMD_SET_LED_COLOR: Byte = 0x05
-    const val CMD_SET_EFFECT_SPEED: Byte = 0x06
-    const val CMD_SET_RPM_THRESHOLDS: Byte = 0x07
-    const val CMD_SET_SHIFT_WARNING: Byte = 0x08
-    const val CMD_SET_SHIFT_LED_COLOR: Byte = 0x09
-    const val CMD_SET_STARTUP_CONFIG: Byte = 0x0A
-    const val CMD_SAVE_TO_NVS: Byte = 0x0B
-    const val CMD_REQUEST_STATE: Byte = 0x0C
-    const val CMD_REQUEST_CAPABILITIES: Byte = 0x0D
-    const val CMD_RESET_DEFAULTS: Byte = 0x0E
 
     // Status Codes (Canonical Firmware Protocol - ble_protocol.h)
     const val STATUS_SUCCESS: Byte = 0x00
@@ -109,10 +87,6 @@ object PulseShiftBleProtocol {
     const val STATUS_ERR_STORAGE_ERROR: Byte = 0x06
     const val STATUS_ERR_VERSION_MISMATCH: Byte = 0x07
     const val STATUS_ERR_VALIDATION_FAILED: Byte = 0x08
-
-    // Frame types
-    const val FRAME_TYPE_ACK: Byte = 0x80.toByte()
-    const val FRAME_TYPE_STATE: Byte = 0x81.toByte()
 
     // --- Protocol V1 Binary Decoders ---
 
@@ -225,173 +199,6 @@ object PulseShiftBleProtocol {
 
     fun buildCancelCaptureRetrieval(): ByteArray {
         return byteArrayOf(PROTOCOL_VERSION, CONTROL_OPCODE_CANCEL_CAPTURE)
-    }
-
-    // --- Legacy / Lighting Compatibility Encoders & Decoders ---
-
-    fun buildFrame(opcode: Byte, sequence: Byte, payload: ByteArray = ByteArray(0)): ByteArray {
-        require(payload.size <= 16) { "Payload cannot exceed 16 bytes for V1 frame" }
-        val frame = ByteArray(4 + payload.size)
-        frame[0] = PROTOCOL_VERSION
-        frame[1] = opcode
-        frame[2] = sequence
-        frame[3] = payload.size.toByte()
-        System.arraycopy(payload, 0, frame, 4, payload.size)
-        return frame
-    }
-
-    fun buildSetPower(power: Boolean, sequence: Byte): ByteArray {
-        return buildFrame(CMD_SET_POWER, sequence, byteArrayOf(if (power) 1 else 0))
-    }
-
-    fun buildSetBrightness(brightness: Int, sequence: Byte): ByteArray {
-        return buildFrame(CMD_SET_BRIGHTNESS, sequence, byteArrayOf(brightness.coerceIn(0, 255).toByte()))
-    }
-
-    fun buildSetEffect(effect: EffectType, sequence: Byte): ByteArray {
-        return buildFrame(CMD_SET_EFFECT, sequence, byteArrayOf(effect.id.toByte()))
-    }
-
-    fun buildSetGlobalColor(color: RgbColor, sequence: Byte): ByteArray {
-        return buildFrame(
-            CMD_SET_GLOBAL_COLOR,
-            sequence,
-            byteArrayOf(color.red.toByte(), color.green.toByte(), color.blue.toByte())
-        )
-    }
-
-    fun buildSetLedColor(index: Int, color: RgbColor, sequence: Byte): ByteArray {
-        require(index in 0..5) { "LED index must be 0-5" }
-        return buildFrame(
-            CMD_SET_LED_COLOR,
-            sequence,
-            byteArrayOf(index.toByte(), color.red.toByte(), color.green.toByte(), color.blue.toByte())
-        )
-    }
-
-    fun buildSetEffectSpeed(speed: Int, sequence: Byte): ByteArray {
-        return buildFrame(CMD_SET_EFFECT_SPEED, sequence, byteArrayOf(speed.coerceIn(0, 100).toByte()))
-    }
-
-    fun buildSetRpmThresholds(thresholds: List<Int>, sequence: Byte): ByteArray {
-        require(thresholds.size == 6) { "Must provide exactly 6 thresholds" }
-        val payload = ByteArray(12)
-        for (i in 0 until 6) {
-            val rpm = thresholds[i].coerceIn(0, 65535)
-            payload[i * 2] = (rpm and 0xFF).toByte()
-            payload[i * 2 + 1] = ((rpm shr 8) and 0xFF).toByte()
-        }
-        return buildFrame(CMD_SET_RPM_THRESHOLDS, sequence, payload)
-    }
-
-    fun buildSetShiftWarning(warningRpm: Int, style: com.pulseshift.app.domain.model.WarningStyle, sequence: Byte): ByteArray {
-        val rpm = warningRpm.coerceIn(0, 65535)
-        val payload = byteArrayOf(
-            (rpm and 0xFF).toByte(),
-            ((rpm shr 8) and 0xFF).toByte(),
-            style.id.toByte()
-        )
-        return buildFrame(CMD_SET_SHIFT_WARNING, sequence, payload)
-    }
-
-    fun buildSetShiftLedColor(index: Int, color: RgbColor, sequence: Byte): ByteArray {
-        require(index in 0..5) { "Shift LED index must be 0-5" }
-        return buildFrame(
-            CMD_SET_SHIFT_LED_COLOR,
-            sequence,
-            byteArrayOf(index.toByte(), color.red.toByte(), color.green.toByte(), color.blue.toByte())
-        )
-    }
-
-    fun buildSetStartupConfig(animationId: Int, durationSec: Int, enabled: Boolean, sequence: Byte): ByteArray {
-        return buildFrame(
-            CMD_SET_STARTUP_CONFIG,
-            sequence,
-            byteArrayOf(animationId.toByte(), durationSec.coerceIn(1, 10).toByte(), if (enabled) 1 else 0)
-        )
-    }
-
-    fun buildSaveToNvs(sequence: Byte): ByteArray {
-        return buildFrame(CMD_SAVE_TO_NVS, sequence)
-    }
-
-    fun buildResetDefaults(sequence: Byte): ByteArray {
-        return buildFrame(
-            CMD_RESET_DEFAULTS,
-            sequence,
-            byteArrayOf(0xA5.toByte())
-        )
-    }
-
-    fun buildRequestState(sequence: Byte): ByteArray {
-        return buildFrame(CMD_REQUEST_STATE, sequence)
-    }
-
-    data class AckResponse(
-        val sequenceRef: Byte,
-        val statusCode: Byte,
-        val isSuccess: Boolean
-    )
-
-    fun parseAck(bytes: ByteArray): AckResponse? {
-        if (bytes.size < 4) return null
-        if (bytes[0] != PROTOCOL_VERSION) return null
-        if (bytes[1] != FRAME_TYPE_ACK) return null
-        val seq = bytes[2]
-        val status = bytes[3]
-        return AckResponse(
-            sequenceRef = seq,
-            statusCode = status,
-            isSuccess = status == STATUS_SUCCESS
-        )
-    }
-
-    fun parseState(bytes: ByteArray): LightingState? {
-        if (bytes.size < 13) return null
-        if (bytes[0] != PROTOCOL_VERSION || bytes[1] != FRAME_TYPE_STATE) return null
-
-        if (bytes.size >= 14) {
-            var calcSum: Byte = 0
-            for (i in 0..12) {
-                calcSum = (calcSum.toInt() xor bytes[i].toInt()).toByte()
-            }
-            if (calcSum != bytes[13]) return null
-        }
-
-        val power = bytes[3].toInt() != 0
-        val brightness = bytes[4].toInt() and 0xFF
-        val effectId = bytes[5].toInt() and 0xFF
-        val speed = bytes[6].toInt() and 0xFF
-        val r = bytes[7].toInt() and 0xFF
-        val g = bytes[8].toInt() and 0xFF
-        val b = bytes[9].toInt() and 0xFF
-        val shiftActive = bytes[10].toInt() != 0
-
-        val globalColor = RgbColor(r, g, b)
-        return LightingState(
-            isPowerOn = power,
-            brightness = brightness,
-            effect = EffectType.fromId(effectId),
-            effectSpeed = speed,
-            globalColor = globalColor,
-            ledColors = List(6) { globalColor },
-            isShiftLightActive = shiftActive,
-            isHardwareConfirmed = true,
-            isPendingSync = false
-        )
-    }
-
-    fun parseDeviceInfo(bytes: ByteArray): Pair<String, DeviceCapabilities>? {
-        if (bytes.size < 6) return null
-        val hwMajor = bytes[1].toInt() and 0xFF
-        val hwMinor = bytes[0].toInt() and 0xFF
-        val fwMajor = bytes[3].toInt() and 0xFF
-        val fwMinor = bytes[2].toInt() and 0xFF
-        val capMask = (bytes[4].toInt() and 0xFF) or ((bytes[5].toInt() and 0xFF) shl 8)
-
-        val fwVersion = "v$fwMajor.$fwMinor (HW $hwMajor.$hwMinor)"
-        val capabilities = DeviceCapabilities.fromBitmask(capMask)
-        return Pair(fwVersion, capabilities)
     }
 
     // --- Configuration V2 Protocol Encoders & Decoders ---
@@ -510,6 +317,27 @@ object PulseShiftBleProtocol {
     fun buildSetCaptureRecordingV2(seq: Int, enable: Boolean): ByteArray =
         buildV2Frame(V2_OPCODE_SET_CAPTURE_RECORDING, seq, byteArrayOf(if (enable) 1 else 0))
 
+    /** Labels subsequent capture records: stage 1..3 (see firmware 0x54). */
+    fun buildSetCaptureStageV2(seq: Int, stage: Int): ByteArray =
+        buildV2Frame(V2_OPCODE_SET_CAPTURE_STAGE, seq, byteArrayOf(stage.coerceIn(1, 3).toByte()))
+
+    /**
+     * Authenticated 10-second synthetic LED bench test (firmware 0x55).
+     * This drives LEDs from a synthetic RPM value; it is not CAN data,
+     * never persists, and never marks calibration as verified.
+     */
+    fun buildSetLedTestRpmV2(seq: Int, rpm: Int, enable: Boolean): ByteArray {
+        val r = rpm.coerceIn(0, 20000)
+        return buildV2Frame(
+            V2_OPCODE_SET_LED_TEST_RPM, seq,
+            byteArrayOf(
+                (r and 0xFF).toByte(),
+                ((r shr 8) and 0xFF).toByte(),
+                if (enable) 1 else 0
+            )
+        )
+    }
+
     fun buildSetRpmHysteresisV2(seq: Int, hysteresisRpm: Int, isStaged: Boolean = false): ByteArray {
         val h = hysteresisRpm.coerceIn(0, 2000)
         return buildV2Frame(
@@ -572,6 +400,9 @@ object PulseShiftBleProtocol {
                 ((bytes[8].toLong() and 0xFF) shl 16) or
                 ((bytes[9].toLong() and 0xFF) shl 24)
         val len = bytes[10].toInt() and 0xFF
+        // The firmware result packet carries at most 9 payload bytes; anything
+        // larger is a malformed frame, not a silently-empty payload.
+        if (len > 9) return null
         val payload = if (bytes.size >= 11 + len && len > 0) bytes.copyOfRange(11, 11 + len) else ByteArray(0)
 
         return com.pulseshift.app.domain.model.ConfigAckResponse(

@@ -18,8 +18,6 @@ class PulseShiftDataStore(private val context: Context) {
         val KEY_IS_ONBOARDING_COMPLETED = booleanPreferencesKey("is_onboarding_completed")
         val KEY_THEME_MODE = intPreferencesKey("theme_mode") // 0: System, 1: Light, 2: Dark
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
-        val KEY_LAST_EFFECT = intPreferencesKey("last_effect")
-        val KEY_APP_BRIGHTNESS = intPreferencesKey("app_brightness")
         val KEY_AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
         val KEY_CUSTOM_PRESETS_JSON = stringPreferencesKey("custom_presets_json")
     }
@@ -32,12 +30,9 @@ class PulseShiftDataStore(private val context: Context) {
         it[KEY_THEME_MODE] ?: 0
     }
 
+    // Opt-in: Material You recoloring overrides the instrument-panel identity.
     val dynamicColor: Flow<Boolean> = context.dataStore.data.map {
-        it[KEY_DYNAMIC_COLOR] ?: true
-    }
-
-    val appBrightness: Flow<Int> = context.dataStore.data.map {
-        it[KEY_APP_BRIGHTNESS] ?: 200
+        it[KEY_DYNAMIC_COLOR] ?: false
     }
 
     val autoReconnect: Flow<Boolean> = context.dataStore.data.map {
@@ -58,10 +53,6 @@ class PulseShiftDataStore(private val context: Context) {
 
     suspend fun setDynamicColor(enabled: Boolean) {
         context.dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled }
-    }
-
-    suspend fun setAppBrightness(brightness: Int) {
-        context.dataStore.edit { it[KEY_APP_BRIGHTNESS] = brightness }
     }
 
     suspend fun setAutoReconnect(enabled: Boolean) {

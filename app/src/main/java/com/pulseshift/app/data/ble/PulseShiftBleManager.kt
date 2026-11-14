@@ -18,13 +18,13 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
+import com.pulseshift.app.BuildConfig
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.DeviceCapabilities
 import com.pulseshift.app.domain.model.DiagnosticLogChunk
 import com.pulseshift.app.domain.model.DiagnosticLogMessage
 import com.pulseshift.app.domain.model.HistoricalPageEnd
-import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.LogSeverity
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import kotlinx.coroutines.CoroutineScope
@@ -108,6 +108,10 @@ sealed class GattOp {
 class PulseShiftBleManager(val context: Context) {
     companion object {
         private const val TAG = "PulseShiftBle"
+
+        /** Fixed high sequence for manager-initiated snapshot fetches; the
+         *  repository allocates 1..N sequentially, so no collision occurs. */
+        private const val SNAPSHOT_REQUEST_SEQ = 0xFF00
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -116,6 +120,10 @@ class PulseShiftBleManager(val context: Context) {
 
     private val _connectionState = MutableStateFlow(BleConnectionState.DISCONNECTED)
     val connectionState: StateFlow<BleConnectionState> = _connectionState.asStateFlow()
+
+    /** Last fatal transport error surfaced to the UI (null when healthy). */
+    private val _connectionError = MutableStateFlow<String?>(null)
+    val connectionError: StateFlow<String?> = _connectionError.asStateFlow()
 
     private val _discoveredDevices = MutableStateFlow<List<BleDevice>>(emptyList())
     val discoveredDevices: StateFlow<List<BleDevice>> = _discoveredDevices.asStateFlow()
@@ -147,13 +155,6 @@ class PulseShiftBleManager(val context: Context) {
     private val _configSnapshots = MutableStateFlow<com.pulseshift.app.domain.model.ConfigSnapshot?>(null)
     val configSnapshots: StateFlow<com.pulseshift.app.domain.model.ConfigSnapshot?> = _configSnapshots.asStateFlow()
 
-    // Legacy / Lighting State Updates
-    private val _deviceStateUpdates = MutableSharedFlow<LightingState>(extraBufferCapacity = 1)
-    val deviceStateUpdates: SharedFlow<LightingState> = _deviceStateUpdates.asSharedFlow()
-
-    private val _commandAcks = MutableSharedFlow<PulseShiftBleProtocol.AckResponse>(extraBufferCapacity = 8)
-    val commandAcks: SharedFlow<PulseShiftBleProtocol.AckResponse> = _commandAcks.asSharedFlow()
-
     private var activeGatt: BluetoothGatt? = null
 
     // Characteristics (V1 Protocol)
@@ -167,11 +168,6 @@ class PulseShiftBleManager(val context: Context) {
     private var configResultCharacteristic: BluetoothGattCharacteristic? = null
     private var configSnapshotCharacteristic: BluetoothGattCharacteristic? = null
     private var capabilitiesCharacteristic: BluetoothGattCharacteristic? = null
-
-    // Legacy characteristics
-    private var commandCharacteristic: BluetoothGattCharacteristic? = null
-    private var stateCharacteristic: BluetoothGattCharacteristic? = null
-    private var deviceInfoCharacteristic: BluetoothGattCharacteristic? = null
 
     // Unified Serialized GATT Operation Queue
     private val gattOpQueue: Queue<GattOp> = LinkedList()
@@ -190,6 +186,8 @@ class PulseShiftBleManager(val context: Context) {
     private var lastConnectedAddress: String? = null
     private var userInitiatedDisconnect = false
     private var reconnectAttempts = 0
+    private var connectedSinceMs = 0L
+    private var connectTimeoutJob: kotlinx.coroutines.Job? = null
     private var reconnectJob: kotlinx.coroutines.Job? = null
     private val _isReconnecting = kotlinx.coroutines.flow.MutableStateFlow(false)
     val isReconnecting: kotlinx.coroutines.flow.StateFlow<Boolean> = _isReconnecting
@@ -205,8 +203,14 @@ class PulseShiftBleManager(val context: Context) {
     private fun scheduleReconnect() {
         if (!autoReconnectEnabled) return
         val address = lastConnectedAddress ?: return
+        // A connection that stayed up for a while was a genuinely healthy
+        // session: the counter is per-episode, not per-app-lifetime.
+        if (connectedSinceMs > 0 && System.currentTimeMillis() - connectedSinceMs > 30_000L) {
+            reconnectAttempts = 0
+        }
         if (reconnectAttempts >= 5) {
             _isReconnecting.value = false
+            _connectionError.value = "Reconnection gave up after 5 attempts; tap Connect to retry."
             return
         }
         val attempt = ++reconnectAttempts
@@ -224,12 +228,17 @@ class PulseShiftBleManager(val context: Context) {
             } ?: return@launch
             _connectionState.value = BleConnectionState.CONNECTING
             activeGatt?.close()
-            activeGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            try {
+                activeGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "connectGatt denied: ${e.message}")
+                _isReconnecting.value = false
+                _connectionState.value = BleConnectionState.PERMISSION_REQUIRED
+            }
         }
     }
 
-    // Sequence & Reboot Tracking
-    private var currentSequence: Int = 1
+    // Reboot tracking (uptime regression detection)
     private var lastUptimeMs: Long = 0L
 
     private var latestDiscoveredRssi: Int = 0
@@ -251,14 +260,7 @@ class PulseShiftBleManager(val context: Context) {
     }
 
     fun hasLightingSupport(): Boolean {
-        return commandCharacteristic != null
-    }
-
-    @Synchronized
-    fun nextSequence(): Byte {
-        val s = currentSequence
-        currentSequence = if (currentSequence >= 255) 1 else currentSequence + 1
-        return s.toByte()
+        return hasConfigV2Support()
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -315,7 +317,6 @@ class PulseShiftBleManager(val context: Context) {
 
         val filters = listOf(
             ScanFilter.Builder().setServiceUuid(ParcelUuid(PulseShiftBleProtocol.SERVICE_UUID)).build(),
-            ScanFilter.Builder().setServiceUuid(ParcelUuid(PulseShiftBleProtocol.LEGACY_SERVICE_UUID)).build(),
             ScanFilter.Builder().setDeviceName(PulseShiftBleProtocol.DEVICE_NAME).build()
         )
 
@@ -323,7 +324,13 @@ class PulseShiftBleManager(val context: Context) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        scanner.startScan(filters, settings, scanCallback)
+        try {
+            scanner.startScan(filters, settings, scanCallback)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "startScan denied: ${e.message}")
+            _connectionState.value = BleConnectionState.PERMISSION_REQUIRED
+            return
+        }
 
         scope.launch {
             delay(10000)
@@ -335,7 +342,11 @@ class PulseShiftBleManager(val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun stopScan() {
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        try {
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "stopScan denied: ${e.message}")
+        }
         if (_connectionState.value == BleConnectionState.SCANNING || _connectionState.value == BleConnectionState.DEVICE_DISCOVERED) {
             _connectionState.value = BleConnectionState.DISCONNECTED
         }
@@ -343,25 +354,70 @@ class PulseShiftBleManager(val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connect(address: String) {
-        val adapter = bluetoothAdapter ?: return
-        val device = adapter.getRemoteDevice(address) ?: return
+        val adapter = bluetoothAdapter ?: run {
+            _connectionState.value = BleConnectionState.UNSUPPORTED
+            return
+        }
+        if (!adapter.isEnabled) {
+            _connectionState.value = BleConnectionState.BLUETOOTH_DISABLED
+            return
+        }
+        val device = try {
+            adapter.getRemoteDevice(address)
+        } catch (e: Exception) {
+            null
+        } ?: run {
+            _connectionError.value = "Invalid device address: $address"
+            _connectionState.value = BleConnectionState.ERROR
+            return
+        }
 
         stopScan()
         userInitiatedDisconnect = false
         lastConnectedAddress = address
         reconnectAttempts = 0
         _isReconnecting.value = false
+        _connectionError.value = null
         _connectionState.value = BleConnectionState.CONNECTING
 
         activeGatt?.close()
-        activeGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        val gatt = try {
+            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "connectGatt denied: ${e.message}")
+            null
+        }
+        if (gatt == null) {
+            _connectionState.value = BleConnectionState.PERMISSION_REQUIRED
+            return
+        }
+        activeGatt = gatt
+
+        // The Android BLE stack sometimes never invokes the callback (device
+        // out of range, stack wedge); fail the attempt instead of hanging.
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = scope.launch {
+            delay(15_000L)
+            if (_connectionState.value == BleConnectionState.CONNECTING ||
+                _connectionState.value == BleConnectionState.DISCOVERING_SERVICES ||
+                _connectionState.value == BleConnectionState.SUBSCRIBING ||
+                (_connectionState.value == BleConnectionState.CONNECTED_WAITING_FOR_DATA && lastUptimeMs == 0L)
+            ) {
+                Log.w(TAG, "GATT connection timed out")
+                _connectionError.value = "Connection timed out after 15 s. Check that the device is powered and in range."
+                disconnect()
+                _connectionState.value = BleConnectionState.ERROR
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
         userInitiatedDisconnect = true
         reconnectJob?.cancel()
+        connectTimeoutJob?.cancel()
         _isReconnecting.value = false
+        connectedSinceMs = 0L
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null
@@ -373,6 +429,7 @@ class PulseShiftBleManager(val context: Context) {
             opTimeoutJob = null
         }
         isHistoricalRetrievalActive = false
+        isCaptureRetrievalActive = false
         isV2CapabilitiesValidated = false
         _connectedDevice.value = null
         _rpmTelemetryState.value = null
@@ -403,46 +460,17 @@ class PulseShiftBleManager(val context: Context) {
 
     /**
      * Enqueue Configuration V2 Command (Characteristic fe12d215-...).
+     * Returns false when no V2 command characteristic exists: no synthetic
+     * ACK is fabricated — callers awaiting a real ACK will time out and
+     * surface the honest failure.
      */
-    fun enqueueConfigCommand(commandBytes: ByteArray) {
-        val char = configCmdCharacteristic
-        if (char == null) {
-            Log.w(TAG, "Attempted V2 config command on non-V2 device")
-            val seq = if (commandBytes.size >= 4) (commandBytes[2].toInt() and 0xFF) or ((commandBytes[3].toInt() and 0xFF) shl 8) else 0
-            val opcode = if (commandBytes.size >= 2) commandBytes[1] else 0.toByte()
-            _configAcksV2.tryEmit(
-                com.pulseshift.app.domain.model.ConfigAckResponse(
-                    version = 2,
-                    opcode = opcode,
-                    sequenceRef = seq,
-                    statusCode = com.pulseshift.app.domain.model.ConfigAckResponse.STATUS_ERR_UNSUPPORTED.toByte(),
-                    resultFlags = 0,
-                    activeRevision = 0L
-                )
-            )
-            return
+    fun enqueueConfigCommand(commandBytes: ByteArray): Boolean {
+        val char = configCmdCharacteristic ?: run {
+            Log.w(TAG, "Attempted V2 config command without a V2 command characteristic")
+            return false
         }
         enqueueGattOp(GattOp.WriteChar(char, commandBytes))
-    }
-
-    /**
-     * Enqueue Legacy Lighting Command. Routes strictly to `commandCharacteristic`.
-     */
-    fun enqueueLightingCommand(commandBytes: ByteArray) {
-        val char = commandCharacteristic
-        if (char == null) {
-            // Devices without legacy lighting service report UNSUPPORTED
-            val seq = if (commandBytes.size > 2) commandBytes[2] else 0.toByte()
-            _commandAcks.tryEmit(
-                PulseShiftBleProtocol.AckResponse(
-                    sequenceRef = seq,
-                    statusCode = PulseShiftBleProtocol.STATUS_ERR_UNSUPPORTED,
-                    isSuccess = false
-                )
-            )
-            return
-        }
-        enqueueGattOp(GattOp.WriteChar(char, commandBytes))
+        return true
     }
 
     /**
@@ -613,54 +641,38 @@ class PulseShiftBleManager(val context: Context) {
         dispatchNextGattOp()
     }
 
+    /**
+     * Publish the connected device from transport facts only. Real
+     * capabilities arrive via the V2 capabilities characteristic read; until
+     * then this only reports which characteristics exist — no fabricated
+     * feature flags, no invented RSSI.
+     */
     @SuppressLint("MissingPermission")
-    private fun updateConnectedDeviceCapabilities() {
-        val deviceAddress = activeGatt?.device?.address ?: ""
+    private fun publishConnectedDevice() {
+        val deviceAddress = activeGatt?.device?.address ?: return
         val deviceName = activeGatt?.device?.name ?: PulseShiftBleProtocol.DEVICE_NAME
         val hasV2 = hasConfigV2Support()
 
-        val parsedCaps = if (hasV2) {
-            DeviceCapabilities(
-                physicalLedCount = 6,
-                hasConfigV2Support = true,
-                supportsIndividualRgb = true,
-                supportsEffects = true,
-                supportsNvsPersistence = (healthCharacteristic != null),
-                supportsStartupAnimation = true,
-                supportsRpmThresholds = true,
-                supportsShiftWarning = true,
-                supportsMultiplier = true,
-                supportsCandidateSource = true,
-                supportsLiveRpmVerified = (rpmTelemetryState.value?.statusFlags?.isCalibrationVerified == true)
+        val existing = _connectedDevice.value
+        // Keep authoritative capabilities once validated; never overwrite them
+        // with synthetic defaults on every telemetry frame.
+        val caps = existing?.capabilities?.takeIf { it.hasConfigV2Support }
+            ?: DeviceCapabilities(
+                physicalLedCount = if (hasV2 || rpmCharacteristic != null) 6 else 0,
+                hasConfigV2Support = hasV2,
+                supportsLiveRpmVerified =
+                    rpmTelemetryState.value?.statusFlags?.isCalibrationVerified == true
             )
-        } else {
-            DeviceCapabilities(
-                physicalLedCount = if (healthCharacteristic != null) 6 else 0,
-                hasConfigV2Support = false,
-                supportsIndividualRgb = false,
-                supportsEffects = false,
-                supportsNvsPersistence = (healthCharacteristic != null),
-                supportsStartupAnimation = false,
-                supportsRpmThresholds = false,
-                supportsShiftWarning = false,
-                supportsMultiplier = false,
-                supportsCandidateSource = false,
-                supportsLiveRpmVerified = (rpmTelemetryState.value?.statusFlags?.isCalibrationVerified == true)
-            )
-        }
-
-        val fwVer = parsedCaps?.firmwareVersion?.takeIf { it != "unknown" }
-            ?: if (hasV2) "v2.0 (PulseShift Config V2)" else "v1.0 (PulseShift BLE Monitoring)"
-        val hwRev = if (hasV2) "ESP32 DevKit V1 (Config V2)" else "ESP32 (CAN Monitor)"
 
         _connectedDevice.value = BleDevice(
             address = deviceAddress,
             name = deviceName,
-            rssi = if (latestDiscoveredRssi != 0) latestDiscoveredRssi else -60,
+            rssi = latestDiscoveredRssi,
             isConnected = true,
-            firmwareVersion = fwVer,
-            hardwareRevision = hwRev,
-            capabilities = parsedCaps
+            firmwareVersion = existing?.firmwareVersion
+                ?: if (hasV2) "2.x (Config V2)" else null,
+            hardwareRevision = existing?.hardwareRevision,
+            capabilities = caps
         )
     }
 
@@ -669,6 +681,7 @@ class PulseShiftBleManager(val context: Context) {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             Log.d(TAG, "onConnectionStateChange: status=$status, newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                connectedSinceMs = System.currentTimeMillis()
                 _connectionState.value = BleConnectionState.DISCOVERING_SERVICES
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -686,15 +699,16 @@ class PulseShiftBleManager(val context: Context) {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             Log.d(TAG, "onServicesDiscovered: status=$status")
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                _connectionError.value = "Service discovery failed (GATT status $status)."
                 _connectionState.value = BleConnectionState.ERROR
                 return
             }
 
             val service = gatt.getService(PulseShiftBleProtocol.SERVICE_UUID)
-                ?: gatt.getService(PulseShiftBleProtocol.LEGACY_SERVICE_UUID)
 
             if (service == null) {
                 Log.e(TAG, "Target service not found on device!")
+                _connectionError.value = "PulseShift service not found. This is not PulseShift firmware."
                 _connectionState.value = BleConnectionState.ERROR
                 disconnect()
                 return
@@ -729,18 +743,12 @@ class PulseShiftBleManager(val context: Context) {
                 capabilitiesCharacteristic = null
             }
 
-            // Legacy / Lighting Characteristics
-            commandCharacteristic = service.getCharacteristic(PulseShiftBleProtocol.COMMAND_CHAR_UUID)
-            stateCharacteristic = service.getCharacteristic(PulseShiftBleProtocol.STATE_CHAR_UUID)
-            deviceInfoCharacteristic = service.getCharacteristic(PulseShiftBleProtocol.DEVICE_INFO_CHAR_UUID)
-
             _connectionState.value = BleConnectionState.SUBSCRIBING
 
             // Enqueue separate, verified notification subscriptions via GATT Op Queue
             rpmCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
             healthCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
             logCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
-            stateCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
             configResultCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
             configSnapshotCharacteristic?.let { enqueueGattOp(GattOp.EnableNotification(it)) }
 
@@ -749,19 +757,23 @@ class PulseShiftBleManager(val context: Context) {
             // Initial reads
             rpmCharacteristic?.let { enqueueGattOp(GattOp.ReadChar(it)) }
             healthCharacteristic?.let { enqueueGattOp(GattOp.ReadChar(it)) }
-            deviceInfoCharacteristic?.let { enqueueGattOp(GattOp.ReadChar(it)) }
             capabilitiesCharacteristic?.let { enqueueGattOp(GattOp.ReadChar(it)) }
             enqueueGattOp(GattOp.ReadRssi)
 
-            updateConnectedDeviceCapabilities()
+            publishConnectedDevice()
             _connectionState.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
         }
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             val charUuid = descriptor.characteristic?.uuid
-            val isSuccess = status == BluetoothGatt.GATT_SUCCESS
-            Log.d(TAG, "onDescriptorWrite callback: char=$charUuid status=$status success=$isSuccess")
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                // A failed CCCD write means notifications for this
+                // characteristic will never arrive; surface it loudly.
+                Log.e(TAG, "Descriptor write FAILED ($status) for $charUuid — subscription broken")
+            } else {
+                Log.d(TAG, "onDescriptorWrite ok for $charUuid")
+            }
             onGattOpCompleted()
         }
 
@@ -790,74 +802,69 @@ class PulseShiftBleManager(val context: Context) {
                         _canHealthState.value = health
                     }
                 }
-                PulseShiftBleProtocol.DEVICE_INFO_CHAR_UUID -> {
-                    PulseShiftBleProtocol.parseDeviceInfo(value)?.let { (fwVersion, capabilities) ->
-                        val dev = _connectedDevice.value
-                        if (dev != null) {
-                            _connectedDevice.value = dev.copy(firmwareVersion = fwVersion, capabilities = capabilities)
-                        }
-                    }
-                }
                 PulseShiftBleProtocol.CAPABILITIES_CHAR_UUID -> {
                     val caps = PulseShiftBleProtocol.parseCapabilitiesV2(value)
                     if (caps != null && caps.hasConfigV2Support) {
                         isV2CapabilitiesValidated = true
                         val dev = _connectedDevice.value
                         if (dev != null) {
+                            // Real, feature-mask-derived capabilities replace
+                            // the transport-only placeholder — once.
                             _connectedDevice.value = dev.copy(
-                                firmwareVersion = "v2.0 (PulseShift Config V2)",
+                                firmwareVersion = "v${caps.firmwareVersion} (Config V2)",
                                 capabilities = caps
                             )
                         }
+                        // Spontaneous snapshot fetch uses a fixed high sequence
+                        // that cannot collide with the repository's 1..N counter.
                         if (configCmdCharacteristic != null) {
-                            val seq = (1..65535).random()
-                            enqueueGattOp(GattOp.WriteChar(configCmdCharacteristic!!, PulseShiftBleProtocol.buildGetSnapshotV2(seq)))
+                            enqueueGattOp(
+                                GattOp.WriteChar(
+                                    configCmdCharacteristic!!,
+                                    PulseShiftBleProtocol.buildGetSnapshotV2(SNAPSHOT_REQUEST_SEQ)
+                                )
+                            )
                         }
+                        _connectionState.value = BleConnectionState.READY
                     } else {
                         isV2CapabilitiesValidated = false
-                        updateConnectedDeviceCapabilities()
+                        publishConnectedDevice()
                     }
                 }
+                else -> {}
             }
         }
 
         private fun checkRebootAndEmitRpm(rpm: RpmTelemetryState) {
             if (lastUptimeMs > 0 && rpm.uptimeMs < (lastUptimeMs - 2000L)) {
+                // Phone-side inference, clearly labeled as such — not a device log.
                 logReassembler.processChunkBytes(
-                    createSynthLogBytes("ESP32 reboot detected (Uptime reset: $lastUptimeMs ms -> ${rpm.uptimeMs} ms)", LogSeverity.INFO)
+                    createSynthLogBytes(
+                        "[phone] ESP32 restart inferred (uptime ${lastUptimeMs / 1000}s -> ${rpm.uptimeMs / 1000}s)",
+                        LogSeverity.INFO
+                    )
                 )
             }
             lastUptimeMs = rpm.uptimeMs
             _rpmTelemetryState.value = rpm
-            updateConnectedDeviceCapabilities()
         }
 
         private fun handleCharacteristicChanged(uuid: UUID, value: ByteArray) {
-            val hexString = value.joinToString(" ") { "%02X".format(it) }
-            val seqStr = when (uuid) {
-                PulseShiftBleProtocol.RPM_CHAR_UUID -> {
-                    if (value.size >= 4) {
-                        val seq = (value[2].toInt() and 0xFF) or ((value[3].toInt() and 0xFF) shl 8)
-                        "seq=$seq"
-                    } else "seq=N/A"
+            if (BuildConfig.DEBUG) {
+                val seqStr = when (uuid) {
+                    PulseShiftBleProtocol.RPM_CHAR_UUID, PulseShiftBleProtocol.HEALTH_CHAR_UUID ->
+                        if (value.size >= 4) {
+                            "seq=" + ((value[2].toInt() and 0xFF) or ((value[3].toInt() and 0xFF) shl 8))
+                        } else "seq=N/A"
+                    PulseShiftBleProtocol.LOG_CHAR_UUID ->
+                        if (value.size >= 5) {
+                            "msgId=" + ((value[2].toInt() and 0xFF) or ((value[3].toInt() and 0xFF) shl 8)) +
+                                " chunkIdx=" + (value[4].toInt() and 0xFF)
+                        } else "seq=N/A"
+                    else -> "seq=N/A"
                 }
-                PulseShiftBleProtocol.HEALTH_CHAR_UUID -> {
-                    if (value.size >= 4) {
-                        val seq = (value[2].toInt() and 0xFF) or ((value[3].toInt() and 0xFF) shl 8)
-                        "seq=$seq"
-                    } else "seq=N/A"
-                }
-                PulseShiftBleProtocol.LOG_CHAR_UUID -> {
-                    if (value.size >= 5) {
-                        val msgId = (value[2].toInt() and 0xFF) or ((value[3].toInt() and 0xFF) shl 8)
-                        val chunkIdx = value[4].toInt() and 0xFF
-                        "msgId=$msgId chunkIdx=$chunkIdx"
-                    } else "seq=N/A"
-                }
-                else -> "seq=N/A"
+                Log.d(TAG, "onCharacteristicChanged: UUID=$uuid len=${value.size} $seqStr")
             }
-
-            Log.d(TAG, "onCharacteristicChanged: UUID=$uuid len=${value.size} $seqStr raw=[$hexString]")
 
             when (uuid) {
                 PulseShiftBleProtocol.RPM_CHAR_UUID -> {
@@ -885,17 +892,7 @@ class PulseShiftBleManager(val context: Context) {
                         _configSnapshots.value = snapshot
                     }
                 }
-                PulseShiftBleProtocol.STATE_CHAR_UUID -> {
-                    if (value.isNotEmpty() && value[1] == PulseShiftBleProtocol.FRAME_TYPE_ACK) {
-                        PulseShiftBleProtocol.parseAck(value)?.let { ack ->
-                            _commandAcks.tryEmit(ack)
-                        }
-                    } else if (value.isNotEmpty() && value[1] == PulseShiftBleProtocol.FRAME_TYPE_STATE) {
-                        PulseShiftBleProtocol.parseState(value)?.let { state ->
-                            _deviceStateUpdates.tryEmit(state)
-                        }
-                    }
-                }
+                else -> {}
             }
         }
 

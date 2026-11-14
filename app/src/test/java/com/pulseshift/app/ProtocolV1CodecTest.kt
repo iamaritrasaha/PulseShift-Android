@@ -183,10 +183,10 @@ class ProtocolV1CodecTest {
         System.arraycopy(payload, 0, packet, 6, payload.size)
 
         reassembler.processChunkBytes(packet)
-        // Check completed message
+        // The completed message must actually arrive and classify as ERROR;
+        // an empty replay cache is a failure, not a pass.
         val emitted = reassembler.completedMessages.replayCache.lastOrNull()
-        if (emitted != null) {
-            assertEquals(LogSeverity.ERROR, emitted.severity)
-        }
+        assertNotNull("Reassembler must emit the completed single-chunk message", emitted)
+        assertEquals(LogSeverity.ERROR, emitted!!.severity)
     }
 }

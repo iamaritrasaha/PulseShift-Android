@@ -90,6 +90,10 @@ class BlePulseShiftRepository(
     private val _lastAckResponse = MutableSharedFlow<ConfigAckResponse>(extraBufferCapacity = 16)
     override val lastAckResponse: SharedFlow<ConfigAckResponse> = _lastAckResponse.asSharedFlow()
 
+    /** Failures of live lighting writes, surfaced to the UI honestly. */
+    private val _lightingError = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    override val lightingSyncError: SharedFlow<String> = _lightingError.asSharedFlow()
+
     private val _isAuthenticated = MutableStateFlow(false)
     override val isAuthenticated: StateFlow<Boolean> = _isAuthenticated.asStateFlow()
 
@@ -183,7 +187,11 @@ class BlePulseShiftRepository(
         val key = AckKey(sequence, opcode)
         val deferred = CompletableDeferred<ConfigAckResponse>()
         ackWaiters[key] = deferred
-        bleManager.enqueueConfigCommand(commandBytes)
+        val enqueued = bleManager.enqueueConfigCommand(commandBytes)
+        if (!enqueued) {
+            ackWaiters.remove(key)
+            return null
+        }
 
         return try {
             withTimeout(timeoutMs) {
@@ -223,25 +231,6 @@ class BlePulseShiftRepository(
     }
 
     init {
-        // Collect state updates from V1 hardware notifications
-        scope.launch {
-            bleManager.deviceStateUpdates.collect { state ->
-                _lightingState.value = state
-            }
-        }
-
-        // Collect V1 command ACKs
-        scope.launch {
-            bleManager.commandAcks.collect { ack ->
-                if (ack.isSuccess) {
-                    _lightingState.value = _lightingState.value.copy(
-                        isHardwareConfirmed = true,
-                        isPendingSync = false
-                    )
-                }
-            }
-        }
-
         // Collect V2 Configuration ACKs & correlate sequence & opcode waiters
         scope.launch {
             bleManager.configAcksV2.collect { ack ->
@@ -275,11 +264,7 @@ class BlePulseShiftRepository(
                         _shiftLightConfig.value = ShiftLightConfig(
                             thresholds = snapshot.rpmThresholds,
                             warningRpm = snapshot.warningRpm,
-                            warningStyle = when (snapshot.warningPatternId) {
-                                1 -> WarningStyle.STROBE
-                                2 -> WarningStyle.SOLID
-                                else -> WarningStyle.FLASH
-                            },
+                            warningStyle = warningStyleFromId(snapshot.warningPatternId),
                             colors = listOf(
                                 RgbColor.NeonGreen,
                                 RgbColor.NeonGreen,
@@ -372,15 +357,28 @@ class BlePulseShiftRepository(
 
         // Owner authentication across reconnects: when a connection carries
         // telemetry, auto-prove the stored credential (challenge-response).
+        // The firmware kills the session when the link drops, so the phone
+        // must reflect that immediately instead of showing a stale session.
         scope.launch {
             bleManager.connectionState.collect { state ->
-                if (state == com.pulseshift.app.data.ble.BleConnectionState.RECEIVING_TELEMETRY) {
-                    checkAuthStateOnConnect()
-                    if (_authState.value == AuthState.ENROLLED && !_isAuthenticated.value) {
-                        val ok = authenticateChallengeResponse()
-                        if (ok) recordDeviceCommand("Owner authentication", DeviceCommandPhase.APPLIED, "Session authorized")
-                        else recordDeviceCommand("Owner authentication", DeviceCommandPhase.FAILED, "Challenge-response rejected")
+                when (state) {
+                    com.pulseshift.app.data.ble.BleConnectionState.RECEIVING_TELEMETRY -> {
+                        checkAuthStateOnConnect()
+                        if (_authState.value == AuthState.ENROLLED && !_isAuthenticated.value) {
+                            val ok = authenticateChallengeResponse()
+                            if (ok) recordDeviceCommand("Owner authentication", DeviceCommandPhase.APPLIED, "Session authorized")
+                            else recordDeviceCommand("Owner authentication", DeviceCommandPhase.FAILED, "Challenge-response rejected")
+                        }
                     }
+                    com.pulseshift.app.data.ble.BleConnectionState.DISCONNECTED,
+                    com.pulseshift.app.data.ble.BleConnectionState.ERROR -> {
+                        if (_isAuthenticated.value || _authState.value == AuthState.AUTHENTICATED) {
+                            _isAuthenticated.value = false
+                            _authState.value = AuthState.SESSION_EXPIRED
+                        }
+                        _historicalPageLoadingState.value = HistoricalLogLoadingState.Idle
+                    }
+                    else -> {}
                 }
             }
         }
@@ -483,166 +481,156 @@ class BlePulseShiftRepository(
         }
     }
 
-    override suspend fun setPower(power: Boolean) {
+    /**
+     * Shared path for live lighting writes: optimistic local update, device
+     * write, ACK wait. Failures are surfaced through [lightingSyncError]
+     * instead of being swallowed; the optimistic value stays as the pending
+     * intent until a fresh snapshot (or CONFIG SAVE) reconciles it.
+     */
+    private suspend fun writeLightingCommand(
+        label: String,
+        opcode: Byte,
+        buildCommand: (seq: Int) -> ByteArray,
+        optimistic: () -> Unit,
+    ) {
         transactionMutex.withLock {
-            draftPower = power
-            val hasV2 = bleManager.hasConfigV2Support()
-            _lightingState.value = _lightingState.value.copy(
-                isPowerOn = power,
-                isPendingSync = hasV2,
-                isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
-            )
+            optimistic()
+            if (!bleManager.hasConfigV2Support()) {
+                _lightingError.tryEmit("Device is not running Config V2 firmware; cannot apply $label.")
+                return@withLock
+            }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required before writing $label.")
+                return@withLock
+            }
             _hasUnsavedChanges.value = true
-            if (hasV2) {
-                val seq = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetPowerV2(seq, power))
+            val seq = nextSeq()
+            val ack = sendCommandAndWaitAck(buildCommand(seq), sequence = seq, opcode = opcode)
+            if (ack == null) {
+                _lightingError.tryEmit("No acknowledgement from device for $label (timeout).")
+                _lightingState.value = _lightingState.value.copy(isPendingSync = true, isHardwareConfirmed = false)
+            } else if (!ack.isSuccess) {
+                _lightingError.tryEmit(ackFailureDetail(ack))
+                _lightingState.value = _lightingState.value.copy(isPendingSync = true, isHardwareConfirmed = false)
+            } else {
+                _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = true)
             }
         }
     }
 
-    override suspend fun setBrightness(brightness: Int) {
-        transactionMutex.withLock {
+    override suspend fun setPower(power: Boolean) = writeLightingCommand(
+        "power", PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
+        { seq -> PulseShiftBleProtocol.buildSetPowerV2(seq, power) },
+        { _lightingState.value = _lightingState.value.copy(isPowerOn = power, isPendingSync = true) },
+    )
+
+    override suspend fun setBrightness(brightness: Int) = writeLightingCommand(
+        "brightness", PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS,
+        { seq -> PulseShiftBleProtocol.buildSetBrightnessV2(seq, brightness) },
+        {
             draftBrightness = brightness
-            val hasV2 = bleManager.hasConfigV2Support()
-            _lightingState.value = _lightingState.value.copy(
-                brightness = brightness,
-                isPendingSync = hasV2,
-                isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
-            )
-            _hasUnsavedChanges.value = true
-            if (hasV2) {
-                val seq = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetBrightnessV2(seq, brightness))
-            }
-        }
-    }
+            _lightingState.value = _lightingState.value.copy(brightness = brightness, isPendingSync = true)
+        },
+    )
 
-    override suspend fun setEffect(effect: EffectType) {
-        transactionMutex.withLock {
+    override suspend fun setEffect(effect: EffectType) = writeLightingCommand(
+        "effect ${effect.displayName}", PulseShiftBleProtocol.V2_OPCODE_SET_EFFECT,
+        { seq -> PulseShiftBleProtocol.buildSetEffectV2(seq, effect.id, _lightingState.value.effectSpeed) },
+        {
             draftEffect = effect
-            val hasV2 = bleManager.hasConfigV2Support()
-            _lightingState.value = _lightingState.value.copy(
-                effect = effect,
-                isPendingSync = hasV2,
-                isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
-            )
-            _hasUnsavedChanges.value = true
-            if (hasV2) {
-                val seq = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetEffectV2(seq, effect.id, _lightingState.value.effectSpeed))
-            }
-        }
-    }
+            _lightingState.value = _lightingState.value.copy(effect = effect, isPendingSync = true)
+        },
+    )
 
-    override suspend fun setEffectSpeed(speed: Int) {
-        transactionMutex.withLock {
+    override suspend fun setEffectSpeed(speed: Int) = writeLightingCommand(
+        "effect speed", PulseShiftBleProtocol.V2_OPCODE_SET_EFFECT,
+        { seq -> PulseShiftBleProtocol.buildSetEffectV2(seq, _lightingState.value.effect.id, speed) },
+        {
             draftEffectSpeed = speed
-            val hasV2 = bleManager.hasConfigV2Support()
-            _lightingState.value = _lightingState.value.copy(
-                effectSpeed = speed,
-                isPendingSync = hasV2,
-                isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
-            )
-            _hasUnsavedChanges.value = true
-            if (hasV2) {
-                val seq = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetEffectV2(seq, _lightingState.value.effect.id, speed))
-            }
-        }
-    }
+            _lightingState.value = _lightingState.value.copy(effectSpeed = speed, isPendingSync = true)
+        },
+    )
 
-    override suspend fun setGlobalColor(color: RgbColor) {
-        transactionMutex.withLock {
+    override suspend fun setGlobalColor(color: RgbColor) = writeLightingCommand(
+        "global color", PulseShiftBleProtocol.V2_OPCODE_SET_GLOBAL_RGB,
+        { seq -> PulseShiftBleProtocol.buildSetGlobalRgbV2(seq, color) },
+        {
             draftLedColors = MutableList(6) { color }
-            val hasV2 = bleManager.hasConfigV2Support()
             _lightingState.value = _lightingState.value.copy(
                 globalColor = color,
                 ledColors = List(6) { color },
-                isPendingSync = hasV2,
-                isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
+                isPendingSync = true
             )
-            _hasUnsavedChanges.value = true
-            if (hasV2) {
-                val seq = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetGlobalRgbV2(seq, color))
-            }
-        }
-    }
+        },
+    )
 
     override suspend fun setIndividualLedColor(index: Int, color: RgbColor) {
-        transactionMutex.withLock {
-            if (index in 0..5) {
+        if (index !in 0..5) return
+        writeLightingCommand(
+            "LED ${index + 1} color", PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+            { seq -> PulseShiftBleProtocol.buildSetLedRgbV2(seq, index, color) },
+            {
                 draftLedColors[index] = color
                 val updated = _lightingState.value.ledColors.toMutableList()
                 updated[index] = color
-                val hasV2 = bleManager.hasConfigV2Support()
-                _lightingState.value = _lightingState.value.copy(
-                    ledColors = updated,
-                    isPendingSync = hasV2,
-                    isHardwareConfirmed = if (hasV2) _lightingState.value.isHardwareConfirmed else false
-                )
-                _hasUnsavedChanges.value = true
-                if (hasV2) {
-                    val seq = nextSeq()
-                    bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetLedRgbV2(seq, index, color))
-                }
-            }
-        }
+                _lightingState.value = _lightingState.value.copy(ledColors = updated, isPendingSync = true)
+            },
+        )
     }
 
     override suspend fun setAllLedColors(colors: List<RgbColor>) {
+        if (colors.size != 6) return
         transactionMutex.withLock {
-            if (colors.size == 6) {
-                draftLedColors = colors.toMutableList()
-                _lightingState.value = _lightingState.value.copy(ledColors = colors, isPendingSync = true)
-                _hasUnsavedChanges.value = true
-                for (i in 0 until 6) {
-                    val seq = nextSeq()
-                    if (bleManager.hasConfigV2Support()) {
-                        bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetLedRgbV2(seq, i, colors[i]))
-                    } else {
-                        bleManager.enqueueLightingCommand(PulseShiftBleProtocol.buildSetLedColor(i, colors[i], seq.toByte()))
-                    }
-                }
+            draftLedColors = colors.toMutableList()
+            _lightingState.value = _lightingState.value.copy(ledColors = colors, isPendingSync = true)
+            if (!bleManager.hasConfigV2Support()) {
+                _lightingError.tryEmit("Device is not running Config V2 firmware; cannot apply colors.")
+                return@withLock
+            }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required before writing colors.")
+                return@withLock
+            }
+            _hasUnsavedChanges.value = true
+            var allOk = true
+            for (i in 0 until 6) {
+                val seq = nextSeq()
+                val ack = sendCommandAndWaitAck(
+                    PulseShiftBleProtocol.buildSetLedRgbV2(seq, i, colors[i]),
+                    sequence = seq,
+                    opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB
+                )
+                if (ack == null || !ack.isSuccess) allOk = false
+            }
+            if (!allOk) {
+                _lightingError.tryEmit("One or more LED color writes were not acknowledged.")
+                _lightingState.value = _lightingState.value.copy(isPendingSync = true, isHardwareConfirmed = false)
+            } else {
+                _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = true)
             }
         }
     }
 
-    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {
-        transactionMutex.withLock {
+    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) = writeLightingCommand(
+        "startup animation", PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP,
+        { seq -> PulseShiftBleProtocol.buildSetStartupV2(seq, animation.id, durationMs) },
+        {
             draftStartupAnimation = animation
             draftStartupDurationMs = durationMs
-            _hasUnsavedChanges.value = true
-            val seq = nextSeq()
-            if (bleManager.hasConfigV2Support()) {
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetStartupV2(seq, animation.id, durationMs))
-            } else {
-                bleManager.enqueueLightingCommand(PulseShiftBleProtocol.buildSetStartupConfig(animation.id, (durationMs / 1000).coerceIn(1, 10), true, seq.toByte()))
-            }
-        }
-    }
+        },
+    )
 
-    override suspend fun setLedDirection(direction: Int) {
-        transactionMutex.withLock {
-            draftLedDirection = direction
-            _hasUnsavedChanges.value = true
-            val seq = nextSeq()
-            if (bleManager.hasConfigV2Support()) {
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetLedDirectionV2(seq, direction))
-            }
-        }
-    }
+    override suspend fun setLedDirection(direction: Int) = writeLightingCommand(
+        "LED direction", PulseShiftBleProtocol.V2_OPCODE_SET_LED_DIRECTION,
+        { seq -> PulseShiftBleProtocol.buildSetLedDirectionV2(seq, direction) },
+        { draftLedDirection = direction },
+    )
 
-    override suspend fun setWarningRgb(color: RgbColor) {
-        transactionMutex.withLock {
-            draftWarningColor = color
-            _hasUnsavedChanges.value = true
-            val seq = nextSeq()
-            if (bleManager.hasConfigV2Support()) {
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetWarningRgbV2(seq, color))
-            }
-        }
-    }
+    override suspend fun setWarningRgb(color: RgbColor) = writeLightingCommand(
+        "warning color", PulseShiftBleProtocol.V2_OPCODE_SET_WARNING_RGB,
+        { seq -> PulseShiftBleProtocol.buildSetWarningRgbV2(seq, color) },
+        { draftWarningColor = color },
+    )
 
     override suspend fun updateShiftLightConfig(config: ShiftLightConfig) {
         transactionMutex.withLock {
@@ -652,20 +640,87 @@ class BlePulseShiftRepository(
             config.colors.getOrNull(5)?.let { draftWarningColor = it }
 
             _shiftLightConfig.value = config
-            _hasUnsavedChanges.value = true
-            if (bleManager.hasConfigV2Support()) {
-                for (i in 0 until 6) {
-                    val seq = nextSeq()
-                    bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetLedThresholdV2(seq, i, config.thresholds[i]))
-                }
-                val seqWarn = nextSeq()
-                bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildSetShiftWarningV2(seqWarn, config.warningRpm, config.warningStyle.id))
-            } else {
-                val seq1 = nextSeq().toByte()
-                bleManager.enqueueLightingCommand(PulseShiftBleProtocol.buildSetRpmThresholds(config.thresholds, seq1))
-                val seq2 = nextSeq().toByte()
-                bleManager.enqueueLightingCommand(PulseShiftBleProtocol.buildSetShiftWarning(config.warningRpm, config.warningStyle, seq2))
+            if (!bleManager.hasConfigV2Support()) {
+                _lightingError.tryEmit("Device is not running Config V2 firmware; cannot apply thresholds.")
+                return@withLock
             }
+            if (!requireAuthenticated()) {
+                _lightingError.tryEmit("Owner authentication required before writing thresholds.")
+                return@withLock
+            }
+            _hasUnsavedChanges.value = true
+            var allOk = true
+            for (i in 0 until 6) {
+                val seq = nextSeq()
+                val ack = sendCommandAndWaitAck(
+                    PulseShiftBleProtocol.buildSetLedThresholdV2(seq, i, config.thresholds[i]),
+                    sequence = seq,
+                    opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD
+                )
+                if (ack == null || !ack.isSuccess) allOk = false
+            }
+            val seqWarn = nextSeq()
+            val ackWarn = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildSetShiftWarningV2(seqWarn, config.warningRpm, config.warningStyle.id),
+                sequence = seqWarn,
+                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_SHIFT_WARNING
+            )
+            if (ackWarn == null || !ackWarn.isSuccess) allOk = false
+
+            if (!allOk) {
+                _lightingError.tryEmit("One or more threshold/warning writes were not acknowledged.")
+            }
+        }
+    }
+
+    /** Firmware-driven capture stage label (opcode 0x54). */
+    override suspend fun setCaptureStage(stage: Int): Boolean {
+        if (!requireAuthenticated()) return false
+        recordDeviceCommand("Capture stage $stage", DeviceCommandPhase.SENDING)
+        val seq = nextSeq()
+        val ack = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildSetCaptureStageV2(seq, stage),
+            sequence = seq,
+            opcode = PulseShiftBleProtocol.V2_OPCODE_SET_CAPTURE_STAGE
+        )
+        return if (ack != null && ack.isSuccess && ack.isApplied) {
+            recordDeviceCommand("Capture stage $stage", DeviceCommandPhase.APPLIED)
+            true
+        } else {
+            recordDeviceCommand("Capture stage $stage", DeviceCommandPhase.FAILED, ackFailureDetail(ack))
+            false
+        }
+    }
+
+    /**
+     * 10-second synthetic LED bench test (opcode 0x55). Drives LEDs from a
+     * synthetic RPM value on the device; never touches CAN data or
+     * calibration state.
+     */
+    override suspend fun setLedTestRpm(rpm: Int, enable: Boolean): Boolean {
+        if (!requireAuthenticated()) return false
+        recordDeviceCommand(
+            if (enable) "LED bench test @ $rpm RPM" else "LED bench test off",
+            DeviceCommandPhase.SENDING
+        )
+        val seq = nextSeq()
+        val ack = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildSetLedTestRpmV2(seq, rpm, enable),
+            sequence = seq,
+            opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_TEST_RPM
+        )
+        return if (ack != null && ack.isSuccess && ack.isApplied) {
+            recordDeviceCommand(
+                if (enable) "LED bench test @ $rpm RPM" else "LED bench test off",
+                DeviceCommandPhase.ACCEPTED, "Expires after 10 s"
+            )
+            true
+        } else {
+            recordDeviceCommand(
+                if (enable) "LED bench test @ $rpm RPM" else "LED bench test off",
+                DeviceCommandPhase.FAILED, ackFailureDetail(ack)
+            )
+            false
         }
     }
 
@@ -912,6 +967,14 @@ class BlePulseShiftRepository(
         }
     }
 
+    /** Firmware warning pattern id (0..3) → UI style; unknown ids map to FLASH. */
+    private fun warningStyleFromId(id: Int): WarningStyle = when (id) {
+        1 -> WarningStyle.STROBE
+        2 -> WarningStyle.SOLID
+        3 -> WarningStyle.OFF
+        else -> WarningStyle.FLASH
+    }
+
     private fun ConfigSnapshot.matchesFullConfig(
         expectedPower: Boolean,
         expectedBrightness: Int,
@@ -1050,6 +1113,16 @@ class BlePulseShiftRepository(
     override suspend fun requestHistoricalLogPage(startOffset: Long) {
         _historicalPageLoadingState.value = HistoricalLogLoadingState.Loading(startOffset)
         bleManager.requestHistoricalLogPage(startOffset)
+        // A dropped page request must not spin a loader forever: the firmware
+        // answer arrives via pageEndEvents, or this transitions to Error.
+        scope.launch {
+            delay(PAGE_REQUEST_TIMEOUT_MS)
+            val current = _historicalPageLoadingState.value
+            if (current is HistoricalLogLoadingState.Loading && current.requestedOffset == startOffset) {
+                _historicalPageLoadingState.value =
+                    HistoricalLogLoadingState.Error("No page response from device (timeout).")
+            }
+        }
     }
 
     override suspend fun cancelHistoricalLogRetrieval() {
@@ -1380,11 +1453,15 @@ class BlePulseShiftRepository(
                     ShiftLightConfig(
                         thresholds = th,
                         warningRpm = s.getInt("warningRpm"),
-                        warningStyle = when (s.getInt("warningStyleId")) {
-                            1 -> WarningStyle.STROBE
-                            2 -> WarningStyle.SOLID
-                            else -> WarningStyle.FLASH
-                        }
+                        warningStyle = warningStyleFromId(s.getInt("warningStyleId")),
+                        colors = if (s.has("warningColor")) {
+                            // Default palette with the persisted warning color in slot 5.
+                            listOf(
+                                RgbColor.NeonGreen, RgbColor.NeonGreen, RgbColor.AmberWarning,
+                                RgbColor.AmberWarning, RgbColor.SunsetOrange,
+                                RgbColor.fromHex(s.getString("warningColor"))
+                            )
+                        } else ShiftLightConfig().colors
                     )
                 } else null
                 list.add(
@@ -1427,6 +1504,7 @@ class BlePulseShiftRepository(
                     s.put("thresholds", th)
                     s.put("warningRpm", cfg.warningRpm)
                     s.put("warningStyleId", cfg.warningStyle.id)
+                    cfg.colors.getOrNull(5)?.let { s.put("warningColor", it.toHex()) }
                     obj.put("shiftLightConfig", s)
                 }
                 arr.put(obj)
@@ -1439,6 +1517,7 @@ class BlePulseShiftRepository(
 
     companion object {
         private const val MAX_CAPTURE_EXPORT_RECORDS = 2000
+        private const val PAGE_REQUEST_TIMEOUT_MS = 8000L
     }
 
     override fun exportLogsAsText(): String {

@@ -31,6 +31,9 @@ interface PulseShiftRepository {
     val hasUnsavedChanges: StateFlow<Boolean>
     val lastAckResponse: SharedFlow<ConfigAckResponse>
 
+    /** Failures of live lighting writes (ACK timeouts, rejections, auth). */
+    val lightingSyncError: SharedFlow<String>
+
     // Telemetry & Diagnostic Protocol V1
     val rpmTelemetryState: StateFlow<RpmTelemetryState?>
     val canHealthState: StateFlow<CanHealthState?>
@@ -85,6 +88,8 @@ interface PulseShiftRepository {
     suspend fun restartDevice(): Boolean
     suspend fun clearDeviceDiagnosticHistory(): Boolean
     suspend fun setCaptureRecording(enable: Boolean): Boolean
+    suspend fun setCaptureStage(stage: Int): Boolean
+    suspend fun setLedTestRpm(rpm: Int, enable: Boolean): Boolean
     fun startCaptureExport()
     fun cancelCaptureExport()
 
