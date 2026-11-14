@@ -200,23 +200,43 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 1. **Dual-Partition Architecture:**
    The ESP32 uses dual 1.25 MB application slots (`app0` and `app1`). Updates are always flashed to the currently **inactive** partition. The running application is never overwritten in place.
 2. **Stationary Safety Interlock:**
-   OTA update is strictly blocked if the motorcycle engine is running (`RPM > 0`) or if active CAN engine speed is detected. Updates must only be performed with the motorcycle parked on a stable power supply.
-3. **Cryptographic SHA-256 Integrity:**
-   The app computes the FIPS 180-2 SHA-256 digest and CRC32 of the binary. The ESP32 incrementally hashes incoming chunked packets with hardware SHA acceleration and compares the full digest before marking the partition valid.
-4. **Bootloader Self-Test & Rollback:**
-   Upon restart, the bootloader boots into the new slot in `ESP_OTA_IMG_PENDING_VERIFY` state. The firmware runs an autonomous self-test (validating NVS configuration and TWAI driver). If verification fails, the ESP32 automatically reboots into the previous working slot.
-5. **Rollback Cancellation (`0x64`):**
-   Once the phone reconnects and verifies the running version, it issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` to mark the new application permanently valid.
+   OTA update is strictly blocked if the motorcycle engine is running (`RPM > 0`) or if active CAN bus traffic has been received within the last 3000 ms. Updates must only be performed with the motorcycle parked on a stable power supply.
+3. **Cryptographic ECDSA P-256 & SHA-256 Authentication:**
+   Images must be signed using the project private key with `tools/sign_firmware.py`, producing a 76-byte `PSOT` authentication trailer. The Android companion app validates the `PSOT` trailer upfront. During transfer, the ESP32 incrementally hashes incoming chunked packets with hardware SHA acceleration and verifies the full 64-byte ECDSA signature against the hardcoded public key before marking the partition bootable.
+4. **Negotiated MTU & Efficient BLE Transfer:**
+   Upon connection, the app requests MTU 512, dynamically adjusting chunk payloads up to 215-230 bytes. This reduces the transfer burden from ~68,000 legacy packets down to ~3,200 chunks, cutting transfer time from 15+ minutes down to 35-45 seconds without packet sequence wraparound hazards.
+5. **Bootloader Self-Test & Rollback:**
+   Upon restart, the ESP32 bootloader boots into the new slot in `ESP_OTA_IMG_PENDING_VERIFY` state. The firmware runs an autonomous self-test (validating LittleFS storage, NVS configuration, CAN listen-only mode, and BLE advertising). If verification fails or the hardware watchdog trips, the ESP32 automatically rolls back to the previous working slot.
+6. **Post-Reboot Verification & No False Success:**
+   The Android app reconnects after reboot and performs strict validation:
+   - Verifies the running partition slot matches the target slot (immediately detects rollback).
+   - Verifies the advertised firmware version matches the target version.
+   - Issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` to cancel rollback and mark the new application permanently valid.
+   - The app explicitly reports failure if a reconnect timeout occurs, capability is missing, rollback is detected, or confirmation fails. It will **never** claim success prematurely.
 
 ### OTA Update Procedure
 
-1. Obtain a compiled production binary (`PulseShift.ino.bin`).
-2. Navigate to **Settings → Firmware & Updates**.
-3. Tap **Flash .bin** and select the firmware binary from your phone's storage.
-4. The app verifies the binary header magic (`0xE7`), validates size limits (64 KB - 1.25 MB), and begins the chunked BLE stream.
-5. Monitor progress on the real-time progress dialog.
-6. Once streaming finishes, the ESP32 verifies checksums, swaps the active boot partition, and reboots.
-7. The app awaits BLE reconnection and confirms that the new firmware version is active on the target slot.
+1. Compile the production firmware:
+   ```bash
+   arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 PulseShift
+   ```
+2. Sign the binary using the private signing key:
+   ```bash
+   uv run --with cryptography python tools/sign_firmware.py sign \
+     --input PulseShift.ino.bin \
+     --key tools/keys/pulseshift_ota_key.pem \
+     --output PulseShift_signed.bin
+   ```
+3. Copy `PulseShift_signed.bin` to your phone.
+4. Connect to PulseShift via BLE and authenticate your owner session.
+5. Navigate to **Settings → Firmware & Updates**.
+6. Tap **Flash .bin** and select `PulseShift_signed.bin`.
+7. The app verifies the binary header magic (`0xE7`), validates size limits (64 KB - 1.25 MB), checks the `PSOT` trailer, and streams the signed binary.
+8. Once streaming finishes, the ESP32 verifies checksums and ECDSA signature, swaps the active boot partition, and reboots.
+9. The app awaits BLE reconnection and confirms that the new firmware version is active on the target slot before reporting success.
+
+> [!NOTE]
+> For hardware bench-testing procedures, failure-injection tests, and universal 4-artifact USB recovery instructions, see [docs/OTA-BENCH-TEST-PLAN.md](https://github.com/iamaritrasaha/PulseShift-Firmware/blob/main/docs/OTA-BENCH-TEST-PLAN.md) in the firmware repository.
 
 ---
 

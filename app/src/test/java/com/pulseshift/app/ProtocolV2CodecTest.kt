@@ -589,5 +589,17 @@ class ProtocolV2CodecTest {
         val otaStatus = PulseShiftBleProtocol.buildOtaStatusV2(107)
         assertEquals(6, otaStatus.size)
         assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS, otaStatus[1])
+
+        // Test Extended OTA_DATA payload (up to 230-232 bytes under high MTU)
+        val largeChunk = ByteArray(220) { (it and 0xFF).toByte() }
+        val extOtaData = PulseShiftBleProtocol.buildOtaDataV2(108, 15, largeChunk)
+        assertEquals(6 + 3 + 220, extOtaData.size)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, extOtaData[1])
+        assertEquals((3 + 220).toByte(), extOtaData[4])
+        assertEquals(15.toByte(), extOtaData[6])
+        assertEquals(0.toByte(), extOtaData[7])
+        assertEquals(220.toByte(), extOtaData[8])
+        assertEquals(0.toByte(), extOtaData[9])
+        assertEquals(1.toByte(), extOtaData[10])
     }
 }
