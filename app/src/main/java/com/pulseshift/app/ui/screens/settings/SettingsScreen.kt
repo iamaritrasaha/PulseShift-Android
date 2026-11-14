@@ -1,6 +1,8 @@
 package com.pulseshift.app.ui.screens.settings
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import com.pulseshift.app.R
 import androidx.compose.foundation.rememberScrollState
@@ -170,16 +173,36 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            "PulseShift v${com.pulseshift.app.BuildConfig.VERSION_NAME}",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            "BLE Config V2 protocol · target vehicle: Bajaj Pulsar NS125",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF101014))
+                                .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
+                                contentDescription = "PulseShift",
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                "PulseShift v${com.pulseshift.app.BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                "BLE Config V2 protocol · target vehicle: Bajaj Pulsar NS125",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     Icon(Icons.Rounded.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 }

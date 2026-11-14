@@ -1,5 +1,8 @@
 package com.pulseshift.app.ui.screens.home
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import com.pulseshift.app.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.ErrorOutline
@@ -199,7 +206,20 @@ private fun ConnectionBanner(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            StatusDot(color = dotColor, size = 12.dp)
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF101014))
+                    .border(1.5.dp, dotColor.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
+                    contentDescription = "PulseShift Controller",
+                    modifier = Modifier.size(34.dp)
+                )
+            }
             Spacer(Modifier.width(PulseShiftSpacing.RelatedControls))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

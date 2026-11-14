@@ -3,6 +3,7 @@ package com.pulseshift.app.ui.screens.logs
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +24,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.res.painterResource
+import com.pulseshift.app.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.ClearAll
@@ -115,7 +118,28 @@ fun LogsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Diagnostics & System Health", style = MaterialTheme.typography.titleLarge) },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF101014))
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
+                                contentDescription = "PulseShift",
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Text("Diagnostics & Health", style = MaterialTheme.typography.titleMedium)
+                    }
+                },
                 actions = {
                     IconButton(onClick = onNavigateToTerminal) {
                         Icon(Icons.Rounded.Terminal, contentDescription = "Open Hardware Terminal")

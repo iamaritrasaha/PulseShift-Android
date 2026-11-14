@@ -1,6 +1,8 @@
 package com.pulseshift.app.ui.screens.terminal
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +20,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import com.pulseshift.app.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
@@ -125,13 +132,32 @@ fun TerminalScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("Hardware Terminal", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = device?.let { "${it.name ?: "PulseShift"} · fw ${it.firmwareVersion ?: "?"}" } ?: "ESP32 Console",
-                            style = PulseShiftMonoTiny,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF101014))
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_pulseshift_logo_round),
+                                contentDescription = "PulseShift",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Column {
+                            Text("Hardware Terminal", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = device?.let { "${it.name ?: "PulseShift"} · fw ${it.firmwareVersion ?: "?"}" } ?: "ESP32 Console",
+                                style = PulseShiftMonoTiny,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 navigationIcon = {

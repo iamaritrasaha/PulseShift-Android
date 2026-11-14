@@ -1,5 +1,9 @@
 # PulseShift Android App
 
+<p align="center">
+  <img src="app/src/main/res/drawable/ic_pulseshift_logo_round.png" width="128" alt="PulseShift Logo" />
+</p>
+
 Companion app for the PulseShift ESP32 shift-light controller (see the
 [firmware repository](https://github.com/iamaritrasaha/PulseShift) and its
 `docs/BLE-PROTOCOL.md` for the wire contract).
