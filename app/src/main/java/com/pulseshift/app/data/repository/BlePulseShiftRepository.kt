@@ -2172,9 +2172,9 @@ class BlePulseShiftRepository(
         }
         val imageState = statusAck.payload[6].toInt() and 0xFF
         val hasRollbackCandidate = (statusAck.payload[7].toInt() and 0xFF) == 1
-        if ((imageState != 1 && imageState != 2) || !hasRollbackCandidate) {
+        if (imageState != 1 || !hasRollbackCandidate) {
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 or VALID=2), " +
+                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 before confirmation), " +
                     "rollback candidate=$hasRollbackCandidate. Firmware confirmation withheld.",
                 false
             )
