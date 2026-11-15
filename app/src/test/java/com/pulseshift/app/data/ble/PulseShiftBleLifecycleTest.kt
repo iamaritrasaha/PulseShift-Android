@@ -380,4 +380,27 @@ class PulseShiftBleLifecycleTest {
         assertNull("Service readiness timeout job must be cancelled", manager.getServiceReadinessTimeoutJob())
         assertEquals("Active GATT should remain intact", mockGatt, manager.getActiveGatt())
     }
+
+    @Test
+    fun testPrepareForOtaRebootCleansUpAndSchedulesReconnect() {
+        val manager = createTestBleManager()
+        val mockGatt = mock(BluetoothGatt::class.java)
+        val mockDevice = mock(BluetoothDevice::class.java)
+        `when`(mockDevice.address).thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(mockGatt.device).thenReturn(mockDevice)
+
+        manager.setActiveGattForTesting(mockGatt)
+        manager.setLastConnectedAddressForTesting("AA:BB:CC:DD:EE:FF")
+        manager.setAutoReconnectEnabled(true)
+        manager.setReconnectAttemptsForTesting(4)
+
+        manager.prepareForOtaReboot(reconnectDelayMs = 100L)
+
+        // Transport must be torn down immediately
+        assertNull("GATT must be cleared immediately upon OTA reboot preparation", manager.getActiveGatt())
+        assertNull("connectedDevice must be null immediately", manager.connectedDevice.value)
+        assertEquals("Reconnect attempts budget must be reset to 0 for OTA reboot", 0, manager.getReconnectAttempts())
+        assertFalse("prepareForOtaReboot must NOT mark userInitiatedDisconnect", manager.isUserInitiatedDisconnect())
+        assertTrue("isReconnecting must be true", manager.isReconnecting.value)
+    }
 }

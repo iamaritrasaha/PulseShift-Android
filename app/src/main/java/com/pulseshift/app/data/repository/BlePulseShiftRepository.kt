@@ -2080,6 +2080,11 @@ class BlePulseShiftRepository(
         _isAuthenticated.value = false
         _authState.value = AuthState.SESSION_EXPIRED
 
+        // Prepare BLE manager for reboot: clean up GATT to prevent zombie handles across reboot,
+        // and schedule reconnect to pick up the new firmware advertisement.
+        bleManager.setAutoReconnectEnabled(true)
+        bleManager.prepareForOtaReboot(reconnectDelayMs = 2500L)
+
         // 4. Device reboot and countdown
         for (sec in 6 downTo 1) {
             _otaUpdateState.value = OtaUpdateState.Rebooting(targetSlot, sec)
@@ -2172,9 +2177,9 @@ class BlePulseShiftRepository(
         }
         val imageState = statusAck.payload[6].toInt() and 0xFF
         val hasRollbackCandidate = (statusAck.payload[7].toInt() and 0xFF) == 1
-        if (imageState != 1 || !hasRollbackCandidate) {
+        if ((imageState != 1 && imageState != 2) || !hasRollbackCandidate) {
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 before confirmation), " +
+                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 or VALID=2), " +
                     "rollback candidate=$hasRollbackCandidate. Firmware confirmation withheld.",
                 false
             )
@@ -2182,14 +2187,37 @@ class BlePulseShiftRepository(
         }
 
         // 9. Explicitly confirm only after authentication and state verification.
-        val confirmed = confirmOtaUpdate()
-        if (!confirmed) {
-            _otaUpdateState.value = OtaUpdateState.Failed(
-                "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"}. " +
-                    "Rollback may occur on a subsequent reboot.",
-                false
+        if (imageState == 1) {
+            val confirmed = confirmOtaUpdate()
+            if (!confirmed) {
+                _otaUpdateState.value = OtaUpdateState.Failed(
+                    "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"}. " +
+                        "Rollback may occur on a subsequent reboot.",
+                    false
+                )
+                return false
+            }
+
+            // Post-confirmation verification: verify state transitioned to VALID (2)
+            val verifySeq = nextSeq()
+            val verifyAck = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildOtaStatusV2(verifySeq),
+                verifySeq,
+                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS,
+                5000L
             )
-            return false
+            val confirmedState = if (verifyAck?.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS &&
+                verifyAck.payload.size >= 8) {
+                verifyAck.payload[6].toInt() and 0xFF
+            } else null
+            if (confirmedState != null && confirmedState != 2) {
+                _otaUpdateState.value = OtaUpdateState.Failed(
+                    "OTA confirmation sent but firmware reported image state=$confirmedState (expected VALID=2). " +
+                        "Rollback may occur on a subsequent reboot.",
+                    false
+                )
+                return false
+            }
         }
 
         _otaUpdateState.value = OtaUpdateState.Success(
