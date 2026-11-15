@@ -250,6 +250,37 @@ class PulseShiftBleManager(
         }
     }
 
+    fun isAutoReconnectEnabled(): Boolean = autoReconnectEnabled
+
+    fun resetReconnectAttempts() {
+        reconnectAttempts = 0
+    }
+
+    /**
+     * Prepares the BLE stack for an expected peripheral soft-reboot (such as during OTA update).
+     * Cleans up the active GATT transport without marking user-initiated disconnect,
+     * resets the reconnect attempt budget, and schedules a reconnection after the specified delay.
+     */
+    fun prepareForOtaReboot(reconnectDelayMs: Long = 3000L) {
+        val address = lastConnectedAddress
+        teardownTransport(wasUserInitiated = false)
+        _connectionState.value = BleConnectionState.DISCONNECTED
+        reconnectAttempts = 0
+        if (address != null) {
+            _isReconnecting.value = true
+            _connectionError.value = "Awaiting device reboot after OTA..."
+            reconnectJob?.cancel()
+            reconnectJob = scope.launch {
+                delay(reconnectDelayMs)
+                if (userInitiatedDisconnect) {
+                    _isReconnecting.value = false
+                    return@launch
+                }
+                connect(address)
+            }
+        }
+    }
+
     private fun scheduleReconnect(errorDetail: String? = null) {
         if (!autoReconnectEnabled || userInitiatedDisconnect) {
             _isReconnecting.value = false
