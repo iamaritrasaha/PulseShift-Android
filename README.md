@@ -210,9 +210,13 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 6. **Post-Reboot Verification & No False Success:**
    The Android app reconnects after reboot and performs strict validation:
    - Verifies the running partition slot matches the target slot (immediately detects rollback).
-   - Verifies the advertised firmware version matches the target version.
-   - Issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` to cancel rollback and mark the new application permanently valid.
-   - The app explicitly reports failure if a reconnect timeout occurs, capability is missing, rollback is detected, or confirmation fails. It will **never** claim success prematurely.
+   - Verifies the running slot and checks that a firmware version is reported. Exact image identity verification still requires a dedicated signed build manifest.
+   - Reauthenticates the owner on the **new** BLE connection. Authentication does not persist across a reboot.
+   - Queries `BLE_CFG_OP_OTA_STATUS (0x65)` for actual bootloader image state and the presence of a rollback candidate. A missing or unsafe state is a hard failure.
+   - Issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` only after reauthentication and state verification. If an ACK is lost, it retries once using the idempotent confirmation command.
+   - The app reports the confirmation error status rather than claiming success when the handshake is missing or rejected.
+
+   **Rollback prerequisite:** The official Arduino-ESP32 core 2.0.x automatically validates a pending image unless the sketch overrides the weak `verifyRollbackLater()` hook. The matching PulseShift firmware now defers validation until owner confirmation. Validate this on physical hardware using `OTA STATUS` over USB before deployment.
 
 ### OTA Update Procedure
 
@@ -236,7 +240,7 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 9. The app awaits BLE reconnection and confirms that the new firmware version is active on the target slot before reporting success.
 
 > [!NOTE]
-> For hardware bench-testing procedures, failure-injection tests, and universal 4-artifact USB recovery instructions, see [docs/OTA-BENCH-TEST-PLAN.md](https://github.com/iamaritrasaha/PulseShift-Firmware/blob/main/docs/OTA-BENCH-TEST-PLAN.md) in the firmware repository.
+> For hardware bench-testing procedures, failure-injection tests, and universal 4-artifact USB recovery instructions, see [docs/OTA-BENCH-TEST-PLAN.md](https://github.com/iamaritrasaha/PulseShift/blob/main/docs/OTA-BENCH-TEST-PLAN.md) in the firmware repository.
 
 ---
 

@@ -540,6 +540,30 @@ class ProtocolV2CodecTest {
     }
 
     @Test
+    fun testParseOtaStatusWithBootloaderVerificationState() {
+        // Result packet: 11-byte header, 8-byte OTA_STATUS payload, padding.
+        val frame = ByteArray(20)
+        frame[0] = 0x02
+        frame[1] = PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS
+        frame[2] = 0x6B
+        frame[4] = PulseShiftBleProtocol.STATUS_SUCCESS
+        frame[10] = 8
+        frame[11] = 0 // OTA engine idle
+        frame[12] = 1 // active app1
+        frame[17] = 1 // ESP_OTA_IMG_PENDING_VERIFY
+        frame[18] = 1 // valid rollback candidate
+
+        val result = PulseShiftBleProtocol.parseConfigAck(frame)
+        assertNotNull(result)
+        assertEquals(8, result!!.payload.size)
+        assertEquals(1, result.payload[6].toInt() and 0xFF)
+        assertEquals(1, result.payload[7].toInt() and 0xFF)
+
+        frame[10] = 10 // firmware result packet can only carry 9 bytes
+        assertNull(PulseShiftBleProtocol.parseConfigAck(frame))
+    }
+
+    @Test
     fun testBuildOtaCommands() {
         // Test GET_ARG_RANGES
         val getRanges = PulseShiftBleProtocol.buildGetArgRangesV2(101)
