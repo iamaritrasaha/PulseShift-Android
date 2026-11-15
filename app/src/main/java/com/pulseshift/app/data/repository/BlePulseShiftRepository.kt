@@ -129,6 +129,7 @@ class BlePulseShiftRepository(
 
     private val _otaUpdateState = MutableStateFlow<OtaUpdateState>(OtaUpdateState.Idle)
     override val otaUpdateState: StateFlow<OtaUpdateState> = _otaUpdateState.asStateFlow()
+    private var lastOtaConfirmError: String? = null
 
     private val _isDeviceBusy = MutableStateFlow(false)
     val isDeviceBusy: StateFlow<Boolean> = _isDeviceBusy.asStateFlow()
@@ -2073,6 +2074,12 @@ class BlePulseShiftRepository(
             return false
         }
 
+        // A reboot destroys the ESP32's connection-bound owner session.
+        // Invalidate the phone's cached status even if its disconnect callback
+        // arrives late, so a stale "authenticated" flag cannot authorize CONFIRM.
+        _isAuthenticated.value = false
+        _authState.value = AuthState.SESSION_EXPIRED
+
         // 4. Device reboot and countdown
         for (sec in 6 downTo 1) {
             _otaUpdateState.value = OtaUpdateState.Rebooting(targetSlot, sec)
@@ -2129,11 +2136,57 @@ class BlePulseShiftRepository(
             return false
         }
 
-        // 7. Send explicit confirmation handshake
+        // 7. Reauthorize THIS new BLE connection. Connection readiness and
+        // capability discovery are read-only; they do not prove owner access.
+        // The background reconnect handler also authenticates, and the shared
+        // mutex makes an explicit retry safe without concurrent auth commands.
+        val authorized = withTimeoutOrNull(20000L) {
+            if (_isAuthenticated.value) true else authenticateChallengeResponse()
+        } == true && _isAuthenticated.value
+        if (!authorized) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "Reconnected, but owner reauthentication failed (${_authState.value}). " +
+                    "The update cannot be confirmed; rollback may occur.",
+                false
+            )
+            return false
+        }
+
+        // 8. Ask the firmware what the bootloader actually thinks. The v2.3+
+        // OTA_STATUS extension exposes its image state and rollback candidate.
+        val statusSeq = nextSeq()
+        val statusAck = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildOtaStatusV2(statusSeq),
+            statusSeq,
+            PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS,
+            5000L
+        )
+        if (statusAck == null || statusAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS ||
+            statusAck.payload.size < 8) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "Cannot verify bootloader OTA state after reconnect (missing OTA_STATUS response). " +
+                    "Refusing to report a successful update.",
+                false
+            )
+            return false
+        }
+        val imageState = statusAck.payload[6].toInt() and 0xFF
+        val hasRollbackCandidate = (statusAck.payload[7].toInt() and 0xFF) == 1
+        if ((imageState != 1 && imageState != 2) || !hasRollbackCandidate) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 or VALID=2), " +
+                    "rollback candidate=$hasRollbackCandidate. Firmware confirmation withheld.",
+                false
+            )
+            return false
+        }
+
+        // 9. Explicitly confirm only after authentication and state verification.
         val confirmed = confirmOtaUpdate()
         if (!confirmed) {
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "Post-update confirmation handshake failed. Firmware rollback may occur on subsequent reboot.",
+                "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"}. " +
+                    "Rollback may occur on a subsequent reboot.",
                 false
             )
             return false
@@ -2156,9 +2209,24 @@ class BlePulseShiftRepository(
     }
 
     override suspend fun confirmOtaUpdate(): Boolean {
-        val seq = nextSeq()
-        val confPkt = PulseShiftBleProtocol.buildOtaConfirmV2(seq)
-        val ack = sendCommandAndWaitAck(confPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, 3000L)
-        return ack != null && ack.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS
+        lastOtaConfirmError = null
+        if (!_isAuthenticated.value) {
+            lastOtaConfirmError = "owner session is not authorized"
+            return false
+        }
+        // Retry at most once: the first confirmation may have succeeded while
+        // its BLE ACK was lost. Firmware confirmation is idempotent for VALID.
+        repeat(2) { attempt ->
+            val seq = nextSeq()
+            val confPkt = PulseShiftBleProtocol.buildOtaConfirmV2(seq)
+            val ack = sendCommandAndWaitAck(confPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, 5000L)
+            if (ack?.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS) return true
+            lastOtaConfirmError = if (ack == null) {
+                "no OTA_CONFIRM acknowledgment (attempt ${attempt + 1}/2)"
+            } else {
+                "ESP32 rejected OTA_CONFIRM with status ${ack.statusCode} (attempt ${attempt + 1}/2)"
+            }
+        }
+        return false
     }
 }
