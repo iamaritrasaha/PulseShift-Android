@@ -479,6 +479,24 @@ class BlePulseShiftRepository(
         diagnosticsWaiters[snapshotId] = deferred
     }
 
+    @androidx.annotation.VisibleForTesting
+    internal fun setAuthenticatedForTesting(authenticated: Boolean) {
+        _isAuthenticated.value = authenticated
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal var commandSenderForTesting: (suspend (ByteArray, Int, Byte, Long) -> ConfigAckResponse?)? = null
+
+    internal suspend fun sendCommand(
+        commandBytes: ByteArray,
+        sequence: Int,
+        opcode: Byte,
+        timeoutMs: Long = 5000L
+    ): ConfigAckResponse? {
+        commandSenderForTesting?.let { return it(commandBytes, sequence, opcode, timeoutMs) }
+        return sendCommandAndWaitAck(commandBytes, sequence, opcode, timeoutMs)
+    }
+
     fun checkAuthStateOnConnect() {
         val deviceAddress = bleManager.connectedDevice.value?.address ?: run {
             _authState.value = AuthState.NOT_ENROLLED
@@ -2157,10 +2175,32 @@ class BlePulseShiftRepository(
             return false
         }
 
-        // 8. Ask the firmware what the bootloader actually thinks. The v2.3+
-        // OTA_STATUS extension exposes its image state and rollback candidate.
+        // 8-10. Verify bootloader OTA state, confirm, and verify transition to VALID
+        return performOtaConfirmationWorkflow(
+            previousVersion = previousVersion,
+            newVer = newVer,
+            runningSlot = runningSlot
+        )
+    }
+
+    /**
+     * Executes the post-reboot bootloader verification and confirmation handshake.
+     *
+     * 1. Queries initial OTA_STATUS: The image MUST report PENDING_VERIFY (1).
+     *    An image already reporting VALID (2) before OTA_CONFIRM was sent is rejected.
+     * 2. Sends OTA_CONFIRM.
+     * 3. Queries final OTA_STATUS: Requires a successful response reporting VALID (2).
+     *    If the OTA_CONFIRM acknowledgment was lost over the air, but final OTA_STATUS
+     *    reports VALID (2), this recovers from the lost ACK.
+     */
+    internal suspend fun performOtaConfirmationWorkflow(
+        previousVersion: String,
+        newVer: String,
+        runningSlot: Int
+    ): Boolean {
+        // Step 8: Ask the firmware what the bootloader actually thinks.
         val statusSeq = nextSeq()
-        val statusAck = sendCommandAndWaitAck(
+        val statusAck = sendCommand(
             PulseShiftBleProtocol.buildOtaStatusV2(statusSeq),
             statusSeq,
             PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS,
@@ -2175,49 +2215,56 @@ class BlePulseShiftRepository(
             )
             return false
         }
-        val imageState = statusAck.payload[6].toInt() and 0xFF
+        val initialImageState = statusAck.payload[6].toInt() and 0xFF
         val hasRollbackCandidate = (statusAck.payload[7].toInt() and 0xFF) == 1
-        if ((imageState != 1 && imageState != 2) || !hasRollbackCandidate) {
+
+        if (initialImageState != 1 || !hasRollbackCandidate) {
+            val reason = if (initialImageState == 2) {
+                "Unsafe OTA state: image already marked VALID (state=2) before confirmation handshake; expected PENDING_VERIFY=1."
+            } else {
+                "Unsafe OTA state: image state=$initialImageState (expected PENDING_VERIFY=1), rollback candidate=$hasRollbackCandidate."
+            }
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "Unsafe OTA state: image state=$imageState (expected PENDING_VERIFY=1 or VALID=2), " +
-                    "rollback candidate=$hasRollbackCandidate. Firmware confirmation withheld.",
+                "$reason Firmware confirmation withheld.",
                 false
             )
             return false
         }
 
-        // 9. Explicitly confirm only after authentication and state verification.
-        if (imageState == 1) {
-            val confirmed = confirmOtaUpdate()
-            if (!confirmed) {
-                _otaUpdateState.value = OtaUpdateState.Failed(
-                    "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"}. " +
-                        "Rollback may occur on a subsequent reboot.",
-                    false
-                )
-                return false
-            }
+        // Step 9: Explicitly confirm only after authentication and initial PENDING_VERIFY verification.
+        val confirmed = confirmOtaUpdate()
 
-            // Post-confirmation verification: verify state transitioned to VALID (2)
-            val verifySeq = nextSeq()
-            val verifyAck = sendCommandAndWaitAck(
-                PulseShiftBleProtocol.buildOtaStatusV2(verifySeq),
-                verifySeq,
-                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS,
-                5000L
+        // Step 10: Mandatory final readback: Query OTA_STATUS to verify the bootloader transitioned to VALID (2).
+        // This is strictly required before declaring success, and enables recovery if the OTA_CONFIRM ACK was lost.
+        val verifySeq = nextSeq()
+        val verifyAck = sendCommand(
+            PulseShiftBleProtocol.buildOtaStatusV2(verifySeq),
+            verifySeq,
+            PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS,
+            5000L
+        )
+        if (verifyAck == null || verifyAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS ||
+            verifyAck.payload.size < 8) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                if (!confirmed) {
+                    "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"} and final status readback failed. " +
+                        "Rollback may occur on a subsequent reboot."
+                } else {
+                    "Failed to read back final OTA status after confirmation. Refusing to report a successful update."
+                },
+                false
             )
-            val confirmedState = if (verifyAck?.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS &&
-                verifyAck.payload.size >= 8) {
-                verifyAck.payload[6].toInt() and 0xFF
-            } else null
-            if (confirmedState != null && confirmedState != 2) {
-                _otaUpdateState.value = OtaUpdateState.Failed(
-                    "OTA confirmation sent but firmware reported image state=$confirmedState (expected VALID=2). " +
-                        "Rollback may occur on a subsequent reboot.",
-                    false
-                )
-                return false
-            }
+            return false
+        }
+
+        val finalImageState = verifyAck.payload[6].toInt() and 0xFF
+        if (finalImageState != 2) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "OTA confirmation sent but firmware reported image state=$finalImageState (expected VALID=2). " +
+                    "Rollback may occur on a subsequent reboot.",
+                false
+            )
+            return false
         }
 
         _otaUpdateState.value = OtaUpdateState.Success(
@@ -2247,7 +2294,7 @@ class BlePulseShiftRepository(
         repeat(2) { attempt ->
             val seq = nextSeq()
             val confPkt = PulseShiftBleProtocol.buildOtaConfirmV2(seq)
-            val ack = sendCommandAndWaitAck(confPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, 5000L)
+            val ack = sendCommand(confPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM, 5000L)
             if (ack?.statusCode == PulseShiftBleProtocol.STATUS_SUCCESS) return true
             lastOtaConfirmError = if (ack == null) {
                 "no OTA_CONFIRM acknowledgment (attempt ${attempt + 1}/2)"
