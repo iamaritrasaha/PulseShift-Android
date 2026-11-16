@@ -30,6 +30,7 @@ class LightingViewModel(
     val shiftLightConfig: StateFlow<ShiftLightConfig> = repository.shiftLightConfig
     val configSnapshot: StateFlow<ConfigSnapshot?> = repository.configSnapshot
     val hasUnsavedChanges: StateFlow<Boolean> = repository.hasUnsavedChanges
+    val isNvsConfirmed: StateFlow<Boolean> = repository.isNvsConfirmed
     val lastAckResponse: SharedFlow<ConfigAckResponse> = repository.lastAckResponse
     val lightingSyncError: SharedFlow<String> = repository.lightingSyncError
     val rpmTelemetryState: StateFlow<RpmTelemetryState?> = repository.rpmTelemetryState

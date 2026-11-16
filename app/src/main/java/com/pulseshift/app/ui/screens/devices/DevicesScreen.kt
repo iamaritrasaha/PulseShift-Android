@@ -163,6 +163,7 @@ fun DevicesScreen(
                         enrollmentMessage = enrollmentMessage,
                         onEnroll = { viewModel.enrollOwner(it) },
                         onAuthenticate = { viewModel.authenticate() },
+                        onClearCredential = { viewModel.clearStoredCredential() },
                         onDismissMessage = { viewModel.clearEnrollmentMessage() }
                     )
                 }
@@ -308,10 +309,12 @@ fun OwnerEnrollmentCard(
     enrollmentMessage: String?,
     onEnroll: (ByteArray) -> Unit,
     onAuthenticate: () -> Unit,
+    onClearCredential: () -> Unit = {},
     onDismissMessage: () -> Unit
 ) {
     val secureRandom = java.security.SecureRandom()
     var confirmEnrollment by remember { mutableStateOf(false) }
+    var confirmClearKey by remember { mutableStateOf(false) }
 
     if (confirmEnrollment) {
         com.pulseshift.app.ui.components.ConfirmDialog(
@@ -331,6 +334,20 @@ fun OwnerEnrollmentCard(
         )
     }
 
+    if (confirmClearKey) {
+        com.pulseshift.app.ui.components.ConfirmDialog(
+            title = "Reset Stored Credential?",
+            text = "This removes the owner credential stored on this phone for this device. " +
+                "You will need to press the physical BOOT button on the ESP32 and enroll again to perform protected operations.",
+            confirmLabel = "Reset Credential",
+            onConfirm = {
+                confirmClearKey = false
+                onClearCredential()
+            },
+            onDismiss = { confirmClearKey = false }
+        )
+    }
+
     Card(
         shape = PulseShiftShapeTokens.Card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -345,8 +362,18 @@ fun OwnerEnrollmentCard(
                 text = when {
                     isAuthenticated -> "Authenticated owner session active. Protected commands are available."
                     authState == com.pulseshift.app.domain.model.AuthState.NOT_ENROLLED ->
-                        "This device has no owner yet. Press the BOOT button on the ESP32, then enroll within 60 seconds."
-                    else -> "Enrolled. The device is authenticated automatically on connect; use the button below to retry."
+                        "This device has no owner yet (or was re-flashed). Press the physical BOOT button on the ESP32, then tap 'Enroll as Owner' within 60 seconds."
+                    authState == com.pulseshift.app.domain.model.AuthState.AUTHENTICATION_REJECTED ->
+                        "Authentication rejected: ESP32 credentials do not match this phone (e.g. after re-flashing). Press the physical BOOT button on the ESP32, then tap 'Enroll as Owner' to recover ownership."
+                    authState == com.pulseshift.app.domain.model.AuthState.SESSION_EXPIRED ->
+                        "Session expired. Tap 'Re-authenticate' to re-authorize the link."
+                    authState == com.pulseshift.app.domain.model.AuthState.BOOT_AUTHORIZATION_REQUIRED ->
+                        "Physical BOOT authorization required on ESP32. Press BOOT button and try again."
+                    authState == com.pulseshift.app.domain.model.AuthState.AUTHENTICATING ->
+                        "Authenticating owner session with ESP32…"
+                    authState == com.pulseshift.app.domain.model.AuthState.ENROLLING ->
+                        "Enrolling owner credentials on ESP32…"
+                    else -> "Enrolled. The device is authenticated automatically on connect; use 'Re-authenticate' to retry."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -363,6 +390,11 @@ fun OwnerEnrollmentCard(
                     shape = PulseShiftShapeTokens.Control,
                     modifier = Modifier.height(38.dp)
                 ) { Text("Re-authenticate") }
+                OutlinedButton(
+                    onClick = { confirmClearKey = true },
+                    shape = PulseShiftShapeTokens.Control,
+                    modifier = Modifier.height(38.dp)
+                ) { Text("Reset Key") }
             }
 
             enrollmentMessage?.let { message ->

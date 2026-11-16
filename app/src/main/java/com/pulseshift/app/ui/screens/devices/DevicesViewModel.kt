@@ -65,6 +65,17 @@ class DevicesViewModel(
         }
     }
 
+    fun clearStoredCredential() {
+        viewModelScope.launch {
+            val ok = repository.clearStoredOwnerCredential()
+            _enrollmentMessage.value = if (ok) {
+                "Stored owner credential cleared. Press BOOT button on ESP32 to re-enroll."
+            } else {
+                "No stored credential found for this device."
+            }
+        }
+    }
+
     fun clearEnrollmentMessage() {
         _enrollmentMessage.value = null
     }
