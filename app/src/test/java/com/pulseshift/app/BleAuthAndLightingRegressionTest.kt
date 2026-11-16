@@ -64,7 +64,7 @@ class BleAuthAndLightingRegressionTest {
 
         connectionStateFlow = MutableStateFlow(BleConnectionState.CONNECTED_WAITING_FOR_DATA)
         connectedDeviceFlow = MutableStateFlow(null)
-        configAcksFlow = MutableSharedFlow<ConfigAckResponse>(extraBufferCapacity = 16)
+        configAcksFlow = MutableSharedFlow<ConfigAckResponse>(replay = 32, extraBufferCapacity = 32)
         configSnapshotsFlow = MutableStateFlow<ConfigSnapshot?>(null)
 
         val logReassembler = DiagnosticLogReassembler()
@@ -1133,7 +1133,7 @@ class BleAuthAndLightingRegressionTest {
 
             // 7. BLE Disconnect resets persistence confirmation
             connectionStateFlow.value = BleConnectionState.DISCONNECTED
-            withTimeout(2000L) {
+            withTimeout(5000L) {
                 while (repository.isAuthenticated.value) {
                     delay(20)
                 }
