@@ -1393,24 +1393,40 @@ class BlePulseShiftRepository(
 
                 transactionCommitted = true
 
-                // 4. Validate Snapshot Readback against ALL fields modified by preset
-                val seqSnap = nextSeq()
-                val snapshot = requestAndWaitSnapshot(seqSnap)
+                // 4. Validate Snapshot Readback against ALL fields modified by preset with retry
+                var snapshot: ConfigSnapshot? = null
+                var attempt = 0
+                val maxAttempts = 3
+                while (attempt < maxAttempts) {
+                    val seqSnap = nextSeq()
+                    snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 3000L)
+                    if (snapshot != null && snapshot.isValid) {
+                        break
+                    }
+                    attempt++
+                    if (attempt < maxAttempts) {
+                        delay(150L)
+                    }
+                }
 
                 val thresholdsMatch = preset.shiftLightConfig == null || (
                     snapshot != null && snapshot.rpmThresholds == preset.shiftLightConfig.thresholds &&
                     snapshot.warningRpm == preset.shiftLightConfig.warningRpm
                 )
 
-                if (snapshot != null && snapshot.isValid && snapshot.activeRevision == ackCommit.activeRevision &&
-                    snapshot.brightness == preset.brightness &&
-                    snapshot.effect == preset.effect &&
-                    snapshot.effectSpeed == preset.effectSpeed &&
-                    snapshot.ledColors == preset.ledColors &&
-                    snapshot.ledDirection == preset.ledDirection &&
-                    snapshot.startupAnimation == preset.startupAnimation &&
-                    snapshot.startupDurationMs == preset.startupDurationMs &&
-                    thresholdsMatch) {
+                val revisionMatches = snapshot != null && snapshot.activeRevision == ackCommit.activeRevision
+                val brightnessMatches = snapshot?.brightness == preset.brightness
+                val effectMatches = snapshot?.effect == preset.effect
+                val effectSpeedMatches = snapshot?.effectSpeed == preset.effectSpeed
+                val ledColorsMatch = snapshot?.ledColors == preset.ledColors
+                val directionMatches = snapshot?.ledDirection == preset.ledDirection
+                val startupMatches = snapshot?.startupAnimation == preset.startupAnimation
+                val startupDurationMatches = snapshot?.startupDurationMs == preset.startupDurationMs
+
+                if (snapshot != null && snapshot.isValid && revisionMatches &&
+                    brightnessMatches && effectMatches && effectSpeedMatches &&
+                    ledColorsMatch && directionMatches && startupMatches &&
+                    startupDurationMatches && thresholdsMatch) {
                     _lightingState.value = _lightingState.value.copy(
                         isPendingSync = false,
                         isHardwareConfirmed = true
@@ -1419,10 +1435,25 @@ class BlePulseShiftRepository(
                     _isNvsConfirmed.value = false
                     recordDeviceCommand("Apply preset", DeviceCommandPhase.APPLIED, "Preset '${preset.name}' applied to hardware (RAM)")
                 } else {
-                    Log.e("PulseShiftRepo", "Snapshot readback validation failed after COMMIT_TRANSACTION")
+                    val mismatchDetails = buildString {
+                        if (snapshot == null) append("Snapshot readback timed out or null; ")
+                        else {
+                            if (!snapshot.isValid) append("Snapshot invalid; ")
+                            if (!revisionMatches) append("Revision mismatch (snap=${snapshot.activeRevision}, ack=${ackCommit.activeRevision}); ")
+                            if (!brightnessMatches) append("Brightness mismatch (snap=${snapshot.brightness}, preset=${preset.brightness}); ")
+                            if (!effectMatches) append("Effect mismatch (snap=${snapshot.effect}, preset=${preset.effect}); ")
+                            if (!effectSpeedMatches) append("EffectSpeed mismatch (snap=${snapshot.effectSpeed}, preset=${preset.effectSpeed}); ")
+                            if (!ledColorsMatch) append("Colors mismatch; ")
+                            if (!directionMatches) append("Direction mismatch (snap=${snapshot.ledDirection}, preset=${preset.ledDirection}); ")
+                            if (!startupMatches) append("StartupAnim mismatch (snap=${snapshot.startupAnimation}, preset=${preset.startupAnimation}); ")
+                            if (!startupDurationMatches) append("StartupDur mismatch (snap=${snapshot.startupDurationMs}, preset=${preset.startupDurationMs}); ")
+                            if (!thresholdsMatch) append("Thresholds/warning mismatch; ")
+                        }
+                    }
+                    Log.e("PulseShiftRepo", "Snapshot validation failed after applying preset: $mismatchDetails")
                     rollbackToPrevious()
-                    _lightingError.tryEmit("Snapshot validation failed after applying preset.")
-                    throw IllegalStateException("Hardware snapshot validation failed after applying preset.")
+                    _lightingError.tryEmit("Snapshot validation failed: $mismatchDetails")
+                    throw IllegalStateException("Hardware snapshot validation failed after applying preset: $mismatchDetails")
                 }
             } finally {
                 if (!transactionCommitted) {
