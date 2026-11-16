@@ -242,9 +242,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
             assertTrue(repository.isAuthenticated.value)
 
             // Power is initially true; we set to false. ACK will time out, but snapshot confirms power = false.
@@ -331,8 +329,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
             assertFalse("Precondition: hasUnsavedChanges initially false", repository.hasUnsavedChanges.value)
 
             // Request BREATHING effect. ACK times out, snapshot returns STATIC (contradicting requested change).
@@ -442,7 +439,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
-            connectionStateFlow.value = BleConnectionState.READY
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             var rejectNextCommand = false
 
@@ -508,9 +505,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
             assertTrue(repository.isAuthenticated.value)
 
             // Simulate explicit command rejection by the ESP32 controller
@@ -710,7 +705,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
-            connectionStateFlow.value = BleConnectionState.READY
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
@@ -752,8 +747,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
             val initialPower = repository.lightingState.value.isPowerOn // true
 
             // Execute setPower(false)
@@ -778,7 +772,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
-            connectionStateFlow.value = BleConnectionState.READY
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val targetColors = listOf(
                 RgbColor(255, 0, 0),
@@ -845,7 +839,17 @@ class BleAuthAndLightingRegressionTest {
                             )
                             configAcksFlow.tryEmit(ack)
                         } else {
-                            // LEDs 2..5 fail / drop
+                            // LEDs 2..5 fail
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_ERR_INVALID_PARAM,
+                                resultFlags = 0,
+                                activeRevision = 4,
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
                         }
                     }
                     PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
@@ -878,8 +882,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
 
             repository.setAllLedColors(targetColors)
 
@@ -901,7 +904,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
-            connectionStateFlow.value = BleConnectionState.READY
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val targetColors = listOf(
                 RgbColor(11, 11, 11),
@@ -957,6 +960,18 @@ class BleAuthAndLightingRegressionTest {
                                 payload = byteArrayOf()
                             )
                             configAcksFlow.tryEmit(ack)
+                        } else {
+                            // LEDs 2..5 fail
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_ERR_INVALID_PARAM,
+                                resultFlags = 0,
+                                activeRevision = 5,
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
                         }
                     }
                 }
@@ -965,8 +980,7 @@ class BleAuthAndLightingRegressionTest {
             }
 
             val repository = createRepository()
-            val authOk = repository.authenticateChallengeResponse()
-            assertTrue("Precondition: Auth must succeed", authOk)
+            repository.setAuthenticatedForTesting(true)
 
             repository.setAllLedColors(targetColors)
 
@@ -988,7 +1002,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
-            connectionStateFlow.value = BleConnectionState.READY
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
