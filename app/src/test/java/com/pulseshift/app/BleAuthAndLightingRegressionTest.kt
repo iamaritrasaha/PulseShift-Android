@@ -17,15 +17,18 @@ import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RgbColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -342,17 +345,14 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.READY
 
-            var failNextCommand = false
+            var rejectNextCommand = false
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
                 val opcode = cmdBytes[1]
                 val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
-
-                if (failNextCommand) {
-                    return@thenAnswer false
-                }
 
                 when (opcode) {
                     PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
@@ -380,6 +380,32 @@ class BleAuthAndLightingRegressionTest {
                         )
                         configAcksFlow.tryEmit(ack)
                     }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_POWER -> {
+                        if (rejectNextCommand) {
+                            // Controller explicitly rejects command with STATUS_ERR_INVALID_PARAM
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_ERR_INVALID_PARAM,
+                                resultFlags = 0,
+                                activeRevision = 1,
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
+                        } else {
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                                resultFlags = 0x01,
+                                activeRevision = 2,
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
+                        }
+                    }
                 }
                 true
             }
@@ -390,61 +416,610 @@ class BleAuthAndLightingRegressionTest {
             assertTrue("Precondition: Auth must succeed", authOk)
             assertTrue(repository.isAuthenticated.value)
 
-            // Simulate command write failure on the BLE bus
-            failNextCommand = true
+            // Simulate explicit command rejection by the ESP32 controller
+            rejectNextCommand = true
 
             val previousPower = repository.lightingState.value.isPowerOn
 
             // Mutate power
             repository.setPower(!previousPower)
 
-            // Power must roll back to previous state!
+            // Power must atomically roll back to previous state on explicit command rejection
             assertEquals("Power must atomically roll back on command failure", previousPower, repository.lightingState.value.isPowerOn)
             assertFalse("hasUnsavedChanges must roll back to false", repository.hasUnsavedChanges.value)
+            assertFalse("isSyncUnknown must be false on explicit rejection", repository.lightingState.value.isSyncUnknown)
         }
     }
 
     @Test
-    fun testStatusPillTruthfulnessUnderAllAuthAndPersistenceStates() {
-        // Test Header Status Pill Text Resolution
-        fun resolveHeaderStatusPill(isAuthenticated: Boolean, unsaved: Boolean, isConfirmed: Boolean): String {
-            return when {
-                !isAuthenticated -> "UNAUTHENTICATED"
-                unsaved -> "RAM ONLY (UNSAVED)"
-                isConfirmed -> "PERSISTED (NVS)"
-                else -> "RAM ACTIVE (UNSAVED)"
+    fun testEnrollOwnerDoesNotMarkLightingNvsConfirmed() {
+        runBlocking {
+            val secret = ByteArray(12) { 0x33.toByte() }
+            whenever(mockCredentialManager.saveEnrolledSecret(testDevice.address, secret)).thenReturn(true)
+            connectedDeviceFlow.value = testDevice
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                if (opcode == PulseShiftBleProtocol.V2_OPCODE_ENROLL_OWNER) {
+                    val ack = ConfigAckResponse(
+                        version = 2,
+                        opcode = PulseShiftBleProtocol.V2_OPCODE_ENROLL_OWNER,
+                        sequenceRef = seq,
+                        statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                        resultFlags = 0x03, // success + persisted in ps_sec
+                        activeRevision = 1,
+                        payload = byteArrayOf()
+                    )
+                    configAcksFlow.tryEmit(ack)
+                }
+                true
             }
-        }
 
-        // Test Controller Persistence Card Status Pill Text Resolution
-        fun resolvePersistenceStatusPill(isAuthenticated: Boolean, unsaved: Boolean, isConfirmed: Boolean): String {
-            return when {
-                !isAuthenticated -> "AUTH REQUIRED"
-                unsaved -> "RAM ACTIVE (UNSAVED)"
-                isConfirmed -> "SAVED IN FLASH"
-                else -> "RAM ONLY (UNSAVED)"
+            val repository = createRepository()
+            val enrolled = repository.enrollOwner(secret)
+            assertTrue("Enrollment must succeed", enrolled)
+            assertTrue("Owner session must be authenticated", repository.isAuthenticated.value)
+
+            // CRITICAL VERIFICATION: Enrolling owner credentials must NOT mark lighting NVS confirmed!
+            assertFalse("Lighting NVS confirmed must remain FALSE after owner enrollment", repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
+    fun testReloadConfigFromControllerVerifiesHardwareRamWithoutMarkingNvsConfirmed() {
+        runBlocking {
+            connectedDeviceFlow.value = testDevice
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                if (opcode == PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT) {
+                    val snapshot = ConfigSnapshot(
+                        isValid = true,
+                        snapshotId = seq,
+                        activeRevision = 5,
+                        isPowerOn = true,
+                        brightness = 175,
+                        effect = com.pulseshift.app.domain.model.EffectType.BREATHING,
+                        effectSpeed = 60,
+                        ledColors = List(6) { RgbColor.NeonGreen },
+                        ledDirection = 0,
+                        startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.PULSE,
+                        startupDurationMs = 1500,
+                        rpmThresholds = listOf(2000, 3000, 4000, 5000, 6000, 7000),
+                        warningRpm = 7500,
+                        warningPatternId = 1,
+                        warningColor = RgbColor.RacingRed,
+                        rpmMultiplier = 40.0f,
+                        canCandidateId = 0x301L,
+                        candidateByteIndex = 0,
+                        isExtendedFrame = false,
+                        calibrationVerified = true
+                    )
+                    configSnapshotsFlow.value = snapshot
+                }
+                true
             }
+
+            val repository = createRepository()
+            repository.setAuthenticatedForTesting(true)
+
+            val snapshot = repository.reloadConfigFromController()
+            assertNotNull("Snapshot must be returned", snapshot)
+            assertEquals(175, repository.lightingState.value.brightness)
+            assertEquals(com.pulseshift.app.domain.model.EffectType.BREATHING, repository.lightingState.value.effect)
+            assertTrue("RAM state must be hardware confirmed", repository.lightingState.value.isHardwareConfirmed)
+            assertFalse("Sync state must not be unknown", repository.lightingState.value.isSyncUnknown)
+
+            // CRITICAL VERIFICATION: RAM snapshot from controller must NOT set isNvsConfirmed!
+            assertFalse("RAM snapshot must NOT establish NVS persistence proof", repository.isNvsConfirmed.value)
         }
+    }
 
-        // Case 1: Unauthenticated with unsaved == false (THE CRITICAL REGRESSION SCENARIO)
-        // Previously rendered "PERSISTED (NVS)" and "SAVED IN FLASH" deceptively!
-        assertEquals("UNAUTHENTICATED", resolveHeaderStatusPill(isAuthenticated = false, unsaved = false, isConfirmed = false))
-        assertEquals("AUTH REQUIRED", resolvePersistenceStatusPill(isAuthenticated = false, unsaved = false, isConfirmed = false))
+    @Test
+    fun testSaveConfigurationToControllerCorrectlyEstablishesNvsPersistenceAndMutationsClearIt() {
+        runBlocking {
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
-        // Case 2: Unauthenticated with unsaved == true
-        assertEquals("UNAUTHENTICATED", resolveHeaderStatusPill(isAuthenticated = false, unsaved = true, isConfirmed = false))
-        assertEquals("AUTH REQUIRED", resolvePersistenceStatusPill(isAuthenticated = false, unsaved = true, isConfirmed = false))
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
 
-        // Case 3: Authenticated with unsaved changes in RAM
-        assertEquals("RAM ONLY (UNSAVED)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = true, isConfirmed = false))
-        assertEquals("RAM ACTIVE (UNSAVED)", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = true, isConfirmed = false))
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x03, // success + persisted
+                            activeRevision = 6,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_POWER -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01, // success (in RAM)
+                            activeRevision = 7,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        val snapshot = ConfigSnapshot(
+                            isValid = true,
+                            snapshotId = seq,
+                            activeRevision = 6,
+                            isPowerOn = true,
+                            brightness = 200,
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = List(6) { RgbColor.BrandViolet },
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = null
+                        configSnapshotsFlow.value = snapshot
+                    }
+                }
+                true
+            }
 
-        // Case 4: Authenticated without unsaved changes, but not yet confirmed saved to NVS
-        assertEquals("RAM ACTIVE (UNSAVED)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = false))
-        assertEquals("RAM ONLY (UNSAVED)", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = false))
+            val repository = createRepository()
+            repository.setAuthenticatedForTesting(true)
 
-        // Case 5: Authenticated and successfully persisted to flash (NVS confirmed)
-        assertEquals("PERSISTED (NVS)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = true))
-        assertEquals("SAVED IN FLASH", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = true))
+            // Initially false
+            assertFalse(repository.isNvsConfirmed.value)
+
+            // Execute explicit save to flash
+            val saved = repository.saveConfigurationToController()
+            assertTrue("Save must succeed", saved)
+            assertTrue("isNvsConfirmed must be TRUE after explicit successful SAVE_CONFIG", repository.isNvsConfirmed.value)
+            assertFalse("hasUnsavedChanges must be FALSE after save", repository.hasUnsavedChanges.value)
+
+            // Mutate power in volatile RAM
+            repository.setPower(false)
+            assertFalse("isNvsConfirmed must transition back to FALSE after live volatile mutation", repository.isNvsConfirmed.value)
+            assertTrue("hasUnsavedChanges must transition to TRUE after mutation", repository.hasUnsavedChanges.value)
+        }
+    }
+
+    @Test
+    fun testBleCommandTimeoutWithFailedSnapshotTransitionsToSyncUnknownWithoutRestoringOldState() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.READY
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        // Drop both SET_POWER and subsequent GET_SNAPSHOT commands, simulating RF blackout
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue("Precondition: Auth must succeed", authOk)
+            val initialPower = repository.lightingState.value.isPowerOn // true
+
+            // Execute setPower(false)
+            repository.setPower(!initialPower)
+
+            // MUST transition to isSyncUnknown = true
+            assertTrue("isSyncUnknown must be TRUE when command times out and snapshot query fails", repository.lightingState.value.isSyncUnknown)
+            assertFalse("isHardwareConfirmed must be FALSE", repository.lightingState.value.isHardwareConfirmed)
+            assertFalse("isPendingSync must be cleared", repository.lightingState.value.isPendingSync)
+
+            // MUST NOT have restored old state!
+            assertEquals("Power state must NOT roll back to old state because controller may have applied it", !initialPower, repository.lightingState.value.isPowerOn)
+            assertTrue("hasUnsavedChanges must remain true", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be false", repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
+    fun testMultiCommandColorPartialFailureReconcilesControllerStateFromSnapshot() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.READY
+
+            val targetColors = listOf(
+                RgbColor(255, 0, 0),
+                RgbColor(0, 255, 0),
+                RgbColor(0, 0, 255),
+                RgbColor(255, 255, 0),
+                RgbColor(255, 0, 255),
+                RgbColor(0, 255, 255)
+            )
+
+            // Controller state reflecting that only LED 0 and 1 were updated before connection stalled
+            val controllerAppliedColors = listOf(
+                targetColors[0],
+                targetColors[1],
+                RgbColor.BrandViolet,
+                RgbColor.BrandViolet,
+                RgbColor.BrandViolet,
+                RgbColor.BrandViolet
+            )
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB -> {
+                        val ledIndex = cmdBytes[6].toInt() and 0xFF
+                        if (ledIndex < 2) {
+                            // LEDs 0 and 1 succeed
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                                resultFlags = 0x01,
+                                activeRevision = (3 + ledIndex).toLong(),
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
+                        } else {
+                            // LEDs 2..5 fail / drop
+                        }
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        val snapshot = ConfigSnapshot(
+                            isValid = true,
+                            snapshotId = seq,
+                            activeRevision = 4,
+                            isPowerOn = true,
+                            brightness = 200,
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = controllerAppliedColors,
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = snapshot
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue("Precondition: Auth must succeed", authOk)
+
+            repository.setAllLedColors(targetColors)
+
+            // CRITICAL VERIFICATION: Controller state is reconciled from snapshot, not a blanket rollback!
+            assertEquals("LED 0 must match controller applied color", targetColors[0], repository.lightingState.value.ledColors[0])
+            assertEquals("LED 1 must match controller applied color", targetColors[1], repository.lightingState.value.ledColors[1])
+            assertEquals("LED 2 must match controller actual color", RgbColor.BrandViolet, repository.lightingState.value.ledColors[2])
+            assertTrue("State must be hardware confirmed from authoritative snapshot", repository.lightingState.value.isHardwareConfirmed)
+            assertFalse("isSyncUnknown must be false since snapshot succeeded", repository.lightingState.value.isSyncUnknown)
+            assertTrue("hasUnsavedChanges must be true", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be false", repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
+    fun testMultiCommandColorPartialFailureWithFailedSnapshotPreservesAcknowledgedLedsAndSetsSyncUnknown() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.READY
+
+            val targetColors = listOf(
+                RgbColor(11, 11, 11),
+                RgbColor(22, 22, 22),
+                RgbColor(33, 33, 33),
+                RgbColor(44, 44, 44),
+                RgbColor(55, 55, 55),
+                RgbColor(66, 66, 66)
+            )
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB -> {
+                        val ledIndex = cmdBytes[6].toInt() and 0xFF
+                        if (ledIndex < 2) {
+                            // Only LEDs 0 and 1 succeed
+                            val ack = ConfigAckResponse(
+                                version = 2,
+                                opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                                resultFlags = 0x01,
+                                activeRevision = 5,
+                                payload = byteArrayOf()
+                            )
+                            configAcksFlow.tryEmit(ack)
+                        }
+                    }
+                }
+                // GET_SNAPSHOT fails/times out (no response)
+                true
+            }
+
+            val repository = createRepository()
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue("Precondition: Auth must succeed", authOk)
+
+            repository.setAllLedColors(targetColors)
+
+            // CRITICAL VERIFICATION: Acknowledged LEDs are retained, not blanket rolled back, and sync is unknown
+            assertEquals("Acknowledged LED 0 must be preserved", targetColors[0], repository.lightingState.value.ledColors[0])
+            assertEquals("Acknowledged LED 1 must be preserved", targetColors[1], repository.lightingState.value.ledColors[1])
+            assertEquals("Unacknowledged LED 2 must retain previous color", RgbColor.BrandViolet, repository.lightingState.value.ledColors[2])
+            assertTrue("isSyncUnknown must be TRUE when partial failure occurs and snapshot is unavailable", repository.lightingState.value.isSyncUnknown)
+            assertFalse("isHardwareConfirmed must be FALSE", repository.lightingState.value.isHardwareConfirmed)
+            assertTrue("hasUnsavedChanges must be TRUE", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be FALSE", repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
+    fun testRepositoryNvsPersistenceLifecycleUnderAuthSnapshotsAndMutations() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.READY
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        val snapshot = ConfigSnapshot(
+                            isValid = true,
+                            snapshotId = seq,
+                            activeRevision = 2,
+                            isPowerOn = true,
+                            brightness = 200,
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = List(6) { RgbColor.BrandViolet },
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = snapshot
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01, // RAM only
+                            activeRevision = 3,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x03, // success + persisted in flash
+                            activeRevision = 4,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+
+            // 1. Initial unauthenticated state
+            assertFalse("isNvsConfirmed must be false initially", repository.isNvsConfirmed.value)
+            assertFalse("isAuthenticated must be false initially", repository.isAuthenticated.value)
+
+            // 2. Authenticate
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue(authOk)
+            assertTrue("isAuthenticated must be true after auth", repository.isAuthenticated.value)
+            assertFalse("Authentication alone must NOT mark isNvsConfirmed", repository.isNvsConfirmed.value)
+
+            // 3. Reload snapshot from controller RAM
+            val snapshot = repository.reloadConfigFromController()
+            assertNotNull(snapshot)
+            assertTrue("Snapshot establishes hardware RAM confirmation", repository.lightingState.value.isHardwareConfirmed)
+            assertFalse("RAM snapshot must NOT mark isNvsConfirmed", repository.isNvsConfirmed.value)
+
+            // 4. Mutate brightness in volatile RAM
+            repository.setBrightness(180)
+            assertTrue("hasUnsavedChanges must be true after volatile mutation", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be false while changes are only in RAM", repository.isNvsConfirmed.value)
+
+            // 5. Persist to flash with SAVE_CONFIG
+            val saved = repository.saveConfigurationToController()
+            assertTrue("SAVE_CONFIG must succeed", saved)
+            assertTrue("isNvsConfirmed must be TRUE ONLY after explicit SAVE_CONFIG ACK with persistence flag", repository.isNvsConfirmed.value)
+            assertFalse("hasUnsavedChanges must be false after successful persistence", repository.hasUnsavedChanges.value)
+
+            // 6. Volatile mutation clears NVS persistence confirmation
+            repository.setBrightness(120)
+            assertTrue("hasUnsavedChanges must be true after new mutation", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must immediately reset to FALSE after any subsequent volatile mutation", repository.isNvsConfirmed.value)
+
+            // 7. BLE Disconnect resets persistence confirmation
+            connectionStateFlow.value = BleConnectionState.DISCONNECTED
+            withTimeout(2000L) {
+                while (repository.isAuthenticated.value) {
+                    delay(20)
+                }
+            }
+            assertFalse("isNvsConfirmed must be reset to FALSE on BLE disconnect", repository.isNvsConfirmed.value)
+            assertFalse("isAuthenticated must be reset to FALSE on BLE disconnect", repository.isAuthenticated.value)
+        }
     }
 }

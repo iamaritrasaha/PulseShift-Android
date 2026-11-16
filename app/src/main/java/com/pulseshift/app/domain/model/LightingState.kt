@@ -10,6 +10,7 @@ data class LightingState(
     val isShiftLightActive: Boolean = false,
     val isPendingSync: Boolean = false,
     val isHardwareConfirmed: Boolean = false,
+    val isSyncUnknown: Boolean = false,
     // Direction and startup configuration live in the same unified state as
     // everything else so no screen reads a second, drifting source.
     val ledDirection: Int = 0, // 0 = forward, 1 = reversed

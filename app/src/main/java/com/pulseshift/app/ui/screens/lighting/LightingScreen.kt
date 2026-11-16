@@ -223,12 +223,14 @@ fun LightingScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = snapshot?.let {
-                                        "Active Rev ${it.activeRevision} · Calibration " +
-                                                if (it.calibrationVerified) "VERIFIED" else "UNVERIFIED"
-                                    } ?: "Hardware synchronized",
+                                    text = when {
+                                        lighting.isSyncUnknown -> "Active Rev ? · Controller Sync Unknown"
+                                        snapshot != null -> "Active Rev ${snapshot!!.activeRevision} · Calibration " +
+                                                if (snapshot!!.calibrationVerified) "VERIFIED" else "UNVERIFIED"
+                                        else -> "Hardware synchronized"
+                                    },
                                     style = PulseShiftMonoTiny,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (lighting.isSyncUnknown) HardwareAmberWarning else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -237,12 +239,13 @@ fun LightingScreen(
                             StatusPill(
                                 text = when {
                                     !isAuthenticated -> "UNAUTHENTICATED"
+                                    lighting.isSyncUnknown -> "SYNC UNKNOWN"
                                     unsaved -> "RAM ONLY (UNSAVED)"
                                     isNvsConfirmed -> "PERSISTED (NVS)"
                                     else -> "RAM ACTIVE (UNSAVED)"
                                 },
                                 color = when {
-                                    !isAuthenticated || unsaved || !isNvsConfirmed -> HardwareAmberWarning
+                                    !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning
                                     else -> HardwareGreenVerified
                                 }
                             )
@@ -451,12 +454,13 @@ fun LightingScreen(
                             StatusPill(
                                 text = when {
                                     !isAuthenticated -> "AUTH REQUIRED"
+                                    lighting.isSyncUnknown -> "SYNC UNKNOWN"
                                     unsaved -> "RAM ACTIVE (UNSAVED)"
                                     isNvsConfirmed -> "SAVED IN FLASH"
                                     else -> "RAM ONLY (UNSAVED)"
                                 },
                                 color = when {
-                                    !isAuthenticated || unsaved || !isNvsConfirmed -> HardwareAmberWarning
+                                    !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning
                                     else -> HardwareGreenVerified
                                 }
                             )
