@@ -234,8 +234,16 @@ fun LightingScreen(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             StatusPill(
-                                text = if (unsaved) "RAM ONLY" else "PERSISTED (NVS)",
-                                color = if (unsaved) HardwareAmberWarning else HardwareGreenVerified
+                                text = when {
+                                    !isAuthenticated -> "UNAUTHENTICATED"
+                                    unsaved -> "RAM ONLY"
+                                    snapshot != null || lighting.isHardwareConfirmed -> "PERSISTED (NVS)"
+                                    else -> "UNVERIFIED"
+                                },
+                                color = when {
+                                    !isAuthenticated || unsaved -> HardwareAmberWarning
+                                    else -> HardwareGreenVerified
+                                }
                             )
                             if (isAuthenticated) {
                                 StatusPill(text = "AUTH OK", color = HardwareGreenVerified)
@@ -440,15 +448,23 @@ fun LightingScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             StatusPill(
-                                text = if (unsaved) "RAM ACTIVE (UNSAVED)" else "SAVED IN FLASH",
-                                color = if (unsaved) HardwareAmberWarning else HardwareGreenVerified
+                                text = when {
+                                    !isAuthenticated -> "AUTH REQUIRED"
+                                    unsaved -> "RAM ACTIVE (UNSAVED)"
+                                    snapshot != null || lighting.isHardwareConfirmed -> "SAVED IN FLASH"
+                                    else -> "UNVERIFIED"
+                                },
+                                color = when {
+                                    !isAuthenticated || unsaved -> HardwareAmberWarning
+                                    else -> HardwareGreenVerified
+                                }
                             )
                         }
 
                         // Primary Save to NVS Action Button
                         Button(
                             onClick = { viewModel.saveToController() },
-                            enabled = !isBusy,
+                            enabled = !isBusy && isAuthenticated,
                             shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -466,8 +482,11 @@ fun LightingScreen(
                                 Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
                                 Text(
-                                    if (unsaved) "Save Changes to ESP32 Flash (NVS)"
-                                    else "All Saved to Flash — Tap to Re-Commit",
+                                    when {
+                                        !isAuthenticated -> "Authentication Required to Save"
+                                        unsaved -> "Save Changes to ESP32 Flash (NVS)"
+                                        else -> "All Saved to Flash — Tap to Re-Commit"
+                                    },
                                     fontWeight = FontWeight.Bold
                                 )
                             }

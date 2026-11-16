@@ -345,8 +345,18 @@ fun OwnerEnrollmentCard(
                 text = when {
                     isAuthenticated -> "Authenticated owner session active. Protected commands are available."
                     authState == com.pulseshift.app.domain.model.AuthState.NOT_ENROLLED ->
-                        "This device has no owner yet. Press the BOOT button on the ESP32, then enroll within 60 seconds."
-                    else -> "Enrolled. The device is authenticated automatically on connect; use the button below to retry."
+                        "This device has no owner yet (or was re-flashed). Press the physical BOOT button on the ESP32, then tap 'Enroll as Owner' within 60 seconds."
+                    authState == com.pulseshift.app.domain.model.AuthState.AUTHENTICATION_REJECTED ->
+                        "Authentication rejected: ESP32 credentials do not match this phone (e.g. after re-flashing). Press the physical BOOT button on the ESP32, then tap 'Enroll as Owner' to recover ownership."
+                    authState == com.pulseshift.app.domain.model.AuthState.SESSION_EXPIRED ->
+                        "Session expired. Tap 'Re-authenticate' to re-authorize the link."
+                    authState == com.pulseshift.app.domain.model.AuthState.BOOT_AUTHORIZATION_REQUIRED ->
+                        "Physical BOOT authorization required on ESP32. Press BOOT button and try again."
+                    authState == com.pulseshift.app.domain.model.AuthState.AUTHENTICATING ->
+                        "Authenticating owner session with ESP32…"
+                    authState == com.pulseshift.app.domain.model.AuthState.ENROLLING ->
+                        "Enrolling owner credentials on ESP32…"
+                    else -> "Enrolled. The device is authenticated automatically on connect; use 'Re-authenticate' to retry."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

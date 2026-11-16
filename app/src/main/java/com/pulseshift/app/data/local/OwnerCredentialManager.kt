@@ -11,10 +11,10 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class OwnerCredentialManager(private val context: Context) {
+open class OwnerCredentialManager(private val context: Context) {
     private val keyAlias = "PulseShiftOwnerSecretKey"
     private val prefsFilename = "pulseshift_owner_credentials"
-    private val prefs = context.getSharedPreferences(prefsFilename, Context.MODE_PRIVATE)
+    private val prefs by lazy { context.getSharedPreferences(prefsFilename, Context.MODE_PRIVATE) }
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -35,18 +35,18 @@ class OwnerCredentialManager(private val context: Context) {
         return keyGenerator.generateKey()
     }
 
-    fun generateNewSecret(): ByteArray {
+    open fun generateNewSecret(): ByteArray {
         val secret = ByteArray(12)
         SecureRandom().nextBytes(secret)
         return secret
     }
 
-    fun hasEnrolledSecret(deviceAddress: String): Boolean {
+    open fun hasEnrolledSecret(deviceAddress: String): Boolean {
         val key = "secret_$deviceAddress"
         return prefs.contains(key)
     }
 
-    fun getEnrolledSecret(deviceAddress: String): ByteArray? {
+    open fun getEnrolledSecret(deviceAddress: String): ByteArray? {
         val key = "secret_$deviceAddress"
         val encryptedDataStr = prefs.getString(key, null) ?: return null
         val ivStr = prefs.getString("${key}_iv", null) ?: return null
@@ -66,7 +66,7 @@ class OwnerCredentialManager(private val context: Context) {
         }
     }
 
-    fun saveEnrolledSecret(deviceAddress: String, secret: ByteArray): Boolean {
+    open fun saveEnrolledSecret(deviceAddress: String, secret: ByteArray): Boolean {
         require(secret.size == 12) { "Owner secret must be exactly 12 bytes" }
         val key = "secret_$deviceAddress"
         return try {
@@ -85,7 +85,7 @@ class OwnerCredentialManager(private val context: Context) {
         }
     }
 
-    fun clearEnrolledSecret(deviceAddress: String) {
+    open fun clearEnrolledSecret(deviceAddress: String) {
         val key = "secret_$deviceAddress"
         prefs.edit()
             .remove(key)
