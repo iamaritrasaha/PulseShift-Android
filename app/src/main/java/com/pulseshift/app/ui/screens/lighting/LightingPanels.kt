@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -68,6 +69,7 @@ import com.pulseshift.app.domain.model.StartupAnimation
 import com.pulseshift.app.domain.model.WarningStyle
 import com.pulseshift.app.ui.components.HsvColorWheel
 import com.pulseshift.app.ui.components.PulseShiftSlider
+import java.util.Locale
 import com.pulseshift.app.ui.components.SectionCard
 import com.pulseshift.app.ui.components.StepperControl
 import com.pulseshift.app.ui.theme.HardwareAmberWarning
@@ -156,8 +158,12 @@ fun ColorsPanel(
         // Master Brightness Card with quick % selectors
         SectionCard(
             title = "Master Brightness",
-            subtitle = "Hardware PWM output scaling (0–255)"
+            subtitle = "Hardware PWM output scaling (0-255)"
         ) {
+            var localBrightness by remember(lighting.brightness) {
+                mutableFloatStateOf(lighting.brightness.toFloat())
+            }
+
             Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -173,41 +179,59 @@ fun ColorsPanel(
                         )
                         Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
                         Text(
-                            text = "${(lighting.brightness * 100) / 255}%",
+                            text = "${(localBrightness.toInt() * 100) / 255}%",
                             style = PulseShiftMonoMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
                     Text(
-                        text = "${lighting.brightness} / 255",
+                        text = "${localBrightness.toInt()} / 255",
                         style = PulseShiftMonoSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-            PulseShiftSlider(
-                value = lighting.brightness.toFloat(),
-                onValueChange = { viewModel.setBrightness(it.toInt()) },
-                valueRange = 0f..255f,
-                modifier = Modifier.fillMaxWidth()
-            )
+                PulseShiftSlider(
+                    value = localBrightness,
+                    onValueChange = {
+                        localBrightness = it
+                        viewModel.setBrightness(it.toInt())
+                    },
+                    onValueChangeFinished = {
+                        viewModel.setBrightness(localBrightness.toInt())
+                    },
+                    valueRange = 0f..255f,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 // Quick Preset Buttons: 25%, 50%, 75%, 100%
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(25 to 64, 50 to 128, 75 to 191, 100 to 255).forEach { (pct, value) ->
                         val isCurrent = (lighting.brightness in (value - 10)..(value + 10))
-                        OutlinedButton(
+                        Surface(
                             onClick = { viewModel.setBrightness(value) },
-                            shape = PulseShiftShapeTokens.Control,
-                            border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                            colors = if (isCurrent) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                                     else ButtonDefaults.outlinedButtonColors(),
-                            modifier = Modifier.weight(1f).height(38.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                     else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(34.dp)
                         ) {
-                            Text("$pct%", style = PulseShiftMonoTiny, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal)
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text(
+                                    text = "$pct%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
@@ -321,8 +345,12 @@ fun EffectsPanel(
 
     SectionCard(
         title = "Animation Speed",
-        subtitle = "Cycle speed for dynamic effects (0–100%)"
+        subtitle = "Cycle speed for dynamic effects (0-100%)"
     ) {
+        var localSpeed by remember(lighting.effectSpeed) {
+            mutableFloatStateOf(lighting.effectSpeed.toFloat())
+        }
+
         Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -338,24 +366,56 @@ fun EffectsPanel(
                     )
                     Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
                     Text(
-                        text = "${lighting.effectSpeed}%",
+                        text = "${localSpeed.toInt()}%",
                         style = PulseShiftMonoMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                StepperControl(
-                    value = lighting.effectSpeed,
-                    onValueChange = { viewModel.setEffectSpeed(it) },
-                    min = 0,
-                    max = 100,
-                    step = 5,
-                    unit = "%"
-                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val next = (localSpeed.toInt() - 5).coerceAtLeast(0)
+                                localSpeed = next.toFloat()
+                                viewModel.setEffectSpeed(next)
+                            },
+                            enabled = localSpeed.toInt() > 0,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Remove, contentDescription = "Decrease speed", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                val next = (localSpeed.toInt() + 5).coerceAtMost(100)
+                                localSpeed = next.toFloat()
+                                viewModel.setEffectSpeed(next)
+                            },
+                            enabled = localSpeed.toInt() < 100,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = "Increase speed", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
 
             PulseShiftSlider(
-                value = lighting.effectSpeed.toFloat(),
-                onValueChange = { viewModel.setEffectSpeed(it.toInt()) },
+                value = localSpeed,
+                onValueChange = {
+                    localSpeed = it
+                    viewModel.setEffectSpeed(it.toInt())
+                },
+                onValueChangeFinished = {
+                    viewModel.setEffectSpeed(localSpeed.toInt())
+                },
                 valueRange = 0f..100f,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -373,7 +433,7 @@ fun EffectsPanel(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (lighting.isDirectionReversed) "Reversed: LED 6 ➔ LED 1" else "Forward: LED 1 ➔ LED 6",
+                    text = if (lighting.isDirectionReversed) "Reversed: LED 6 → LED 1" else "Forward: LED 1 → LED 6",
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -580,34 +640,93 @@ private fun WarningCard(viewModel: LightingViewModel, config: ShiftLightConfig) 
                         color = HardwareRedError
                     )
                 }
-                StepperControl(
-                    value = warningRpm,
-                    onValueChange = {
-                        warningRpm = it
-                        viewModel.setShiftWarning(warningRpm, selectedStyle, warningColor)
-                    },
-                    min = minWarning,
-                    max = 16000,
-                    step = 100,
-                    unit = "RPM"
-                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val next = (warningRpm - 100).coerceAtLeast(minWarning)
+                                warningRpm = next
+                                viewModel.setShiftWarning(next, selectedStyle, warningColor)
+                            },
+                            enabled = warningRpm > minWarning,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Remove, contentDescription = "Decrease warning RPM", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                val next = (warningRpm + 100).coerceAtMost(16000)
+                                warningRpm = next
+                                viewModel.setShiftWarning(next, selectedStyle, warningColor)
+                            },
+                            enabled = warningRpm < 16000,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = "Increase warning RPM", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
 
             Text("Flash Strobe Pattern", style = MaterialTheme.typography.labelMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel)
-            ) {
-                WarningStyle.entries.forEach { style ->
-                    FilterChip(
-                        selected = selectedStyle == style,
-                        onClick = {
-                            selectedStyle = style
-                            viewModel.setShiftWarning(warningRpm, style, warningColor)
-                        },
-                        label = { Text(style.label, style = PulseShiftMonoTiny) },
-                        modifier = Modifier.weight(1f)
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                WarningStyle.entries.chunked(2).forEach { rowStyles ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowStyles.forEach { style ->
+                            val isSelected = selectedStyle == style
+                            Surface(
+                                onClick = {
+                                    selectedStyle = style
+                                    viewModel.setShiftWarning(warningRpm, style, warningColor)
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                         else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp)
+                                ) {
+                                    if (isSelected) {
+                                        Icon(
+                                            Icons.Rounded.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        text = style.label,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -685,7 +804,7 @@ fun StartupPanel(
                                 )
                                 Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
                                 Text(
-                                    text = "— ${animation.subtitle}",
+                                    text = "- ${animation.subtitle}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -725,6 +844,8 @@ fun StartupPanel(
         }
     }
 
+    val effectiveMin = minOf(500, lighting.startupDurationMs).coerceAtLeast(100)
+
     SectionCard(
         title = "Animation Duration",
         subtitle = "Length of the ignition sequence in seconds"
@@ -735,53 +856,98 @@ fun StartupPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = String.format("%.1f seconds (%d ms)", durationMs / 1000f, durationMs.toInt()),
-                    style = PulseShiftMonoMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                StepperControl(
-                    value = durationMs.toInt(),
-                    onValueChange = {
-                        durationMs = it.toFloat()
-                        viewModel.setStartupAnimation(lighting.startupAnimation, it)
-                    },
-                    min = 500,
-                    max = 6000,
-                    step = 250,
-                    unit = "ms"
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.Speed,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
+                    Text(
+                        text = String.format(Locale.US, "%.1fs (%d ms)", durationMs / 1000f, durationMs.toInt()),
+                        style = PulseShiftMonoMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val next = (durationMs.toInt() - 250).coerceAtLeast(effectiveMin)
+                                durationMs = next.toFloat()
+                                viewModel.setStartupAnimation(lighting.startupAnimation, next)
+                            },
+                            enabled = durationMs.toInt() > effectiveMin,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Remove, contentDescription = "Decrease duration", modifier = Modifier.size(18.dp))
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val next = (durationMs.toInt() + 250).coerceAtMost(10000)
+                                durationMs = next.toFloat()
+                                viewModel.setStartupAnimation(lighting.startupAnimation, next)
+                            },
+                            enabled = durationMs.toInt() < 10000,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = "Increase duration", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
 
             PulseShiftSlider(
-                value = durationMs,
+                value = durationMs.coerceIn(effectiveMin.toFloat(), 10000f),
                 onValueChange = { durationMs = it },
                 onValueChangeFinished = {
                     viewModel.setStartupAnimation(lighting.startupAnimation, durationMs.toInt())
                 },
-                valueRange = 500f..6000f,
+                valueRange = effectiveMin.toFloat()..10000f,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Quick Duration Preset Chips
+            // Quick Duration Preset Chips (including 10.0s)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf(1000 to "1.0s", 1500 to "1.5s", 2000 to "2.0s", 3000 to "3.0s", 4000 to "4.0s").forEach { (ms, label) ->
+                listOf(1000 to "1.0s", 2000 to "2.0s", 3000 to "3.0s", 5000 to "5.0s", 10000 to "10.0s").forEach { (ms, label) ->
                     val isCurrent = (durationMs.toInt() in (ms - 100)..(ms + 100))
-                    OutlinedButton(
+                    Surface(
                         onClick = {
                             durationMs = ms.toFloat()
                             viewModel.setStartupAnimation(lighting.startupAnimation, ms)
                         },
-                        shape = PulseShiftShapeTokens.Control,
-                        border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                        colors = if (isCurrent) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                                 else ButtonDefaults.outlinedButtonColors(),
-                        modifier = Modifier.weight(1f).height(38.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                 else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
                     ) {
-                        Text(label, style = PulseShiftMonoTiny, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal)
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }

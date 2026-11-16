@@ -511,8 +511,7 @@ class PulseShiftBleManager(
         _connectionError.value = null
         _connectionState.value = BleConnectionState.CONNECTING
 
-        activeGatt?.close()
-        activeGatt = null
+        teardownTransport(wasUserInitiated = false)
         val gatt = try {
             device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
@@ -593,8 +592,14 @@ class PulseShiftBleManager(
      */
     private fun teardownTransport(wasUserInitiated: Boolean) {
         cancelServiceReadinessTimeout()
-        activeGatt?.disconnect()
-        activeGatt?.close()
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = null
+        try {
+            activeGatt?.disconnect()
+            activeGatt?.close()
+        } catch (_: SecurityException) {
+            Log.w(TAG, "teardownTransport: SecurityException while closing GATT")
+        }
         activeGatt = null
         _currentMtu.value = 23
         synchronized(this) {
@@ -849,7 +854,8 @@ class PulseShiftBleManager(
         }
 
         var initiated = false
-        when (op) {
+        try {
+            when (op) {
             is GattOp.ReadChar -> {
                 initiated = gatt.readCharacteristic(op.characteristic)
                 Log.d(TAG, "dispatchNextGattOp: ReadChar for ${op.characteristic.uuid}, initiated=$initiated")
@@ -914,6 +920,10 @@ class PulseShiftBleManager(
                 initiated = gatt.readRemoteRssi()
                 Log.d(TAG, "dispatchNextGattOp: ReadRssi, initiated=$initiated")
             }
+        }
+    } catch (e: SecurityException) {
+            Log.w(TAG, "dispatchNextGattOp: SecurityException executing GATT op: ${e.message}")
+            initiated = false
         }
 
         if (!initiated) {
@@ -1327,6 +1337,7 @@ class PulseShiftBleManager(
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             super.onMtuChanged(gatt, mtu, status)
+            if (gatt != activeGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "GATT MTU updated: $mtu")
                 _currentMtu.value = mtu

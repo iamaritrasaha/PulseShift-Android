@@ -1,5 +1,6 @@
 package com.pulseshift.app.ui.screens.lighting
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.Check
@@ -39,6 +41,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -95,7 +98,8 @@ private val LIGHTING_TABS = listOf(
 @Composable
 fun LightingScreen(
     viewModel: LightingViewModel,
-    onNavigateToPresets: () -> Unit
+    onNavigateToPresets: () -> Unit,
+    onNavigateBack: () -> Unit = {}
 ) {
     val lighting by viewModel.lightingState.collectAsState()
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
@@ -112,6 +116,10 @@ fun LightingScreen(
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var newPresetName by remember { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
+
+    BackHandler {
+        onNavigateBack()
+    }
 
     LaunchedEffect(Unit) {
         syncErrors.collect { snackbar.showSnackbar(it) }
@@ -197,20 +205,31 @@ fun LightingScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column {
-                            Text(
-                                "Lighting Studio",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = snapshot?.let {
-                                    "Active Rev ${it.activeRevision} · Calibration " +
-                                            if (it.calibrationVerified) "VERIFIED" else "UNVERIFIED"
-                                } ?: "Hardware synchronized",
-                                style = PulseShiftMonoTiny,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = onNavigateBack
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = "Back to Dashboard"
+                                )
+                            }
+                            Spacer(Modifier.width(PulseShiftSpacing.Micro))
+                            Column {
+                                Text(
+                                    "Lighting Studio",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = snapshot?.let {
+                                        "Active Rev ${it.activeRevision} · Calibration " +
+                                                if (it.calibrationVerified) "VERIFIED" else "UNVERIFIED"
+                                    } ?: "Hardware synchronized",
+                                    style = PulseShiftMonoTiny,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

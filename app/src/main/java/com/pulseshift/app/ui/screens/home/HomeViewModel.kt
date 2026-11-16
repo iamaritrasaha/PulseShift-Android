@@ -8,6 +8,7 @@ import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
+import com.pulseshift.app.domain.model.ShiftLightConfig
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +21,7 @@ class HomeViewModel(
 ) : ViewModel() {
     val lightingState: StateFlow<LightingState> = repository.lightingState
     val connectedDevice: StateFlow<BleDevice?> = repository.connectedDevice
+    val shiftLightConfig: StateFlow<ShiftLightConfig> = repository.shiftLightConfig
     val presets: StateFlow<List<Preset>> = repository.presets
     val rpmTelemetryState: StateFlow<RpmTelemetryState?> = repository.rpmTelemetryState
     val hasUnsavedChanges: StateFlow<Boolean> = repository.hasUnsavedChanges

@@ -521,7 +521,14 @@ private fun CreatePresetSheet(
                     FilterChip(
                         selected = selectedEffect == effect,
                         onClick = { selectedEffect = effect },
-                        label = { Text(effect.displayName) },
+                        label = {
+                            Text(
+                                effect.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
                         modifier = Modifier.weight(1f)
                     )
                 }

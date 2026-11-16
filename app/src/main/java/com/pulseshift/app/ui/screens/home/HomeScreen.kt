@@ -1,5 +1,6 @@
 package com.pulseshift.app.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +55,16 @@ import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
+import com.pulseshift.app.domain.model.ShiftLightConfig
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
+import java.util.Locale
 import com.pulseshift.app.ui.components.LedStripPreview
 import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
@@ -94,6 +105,7 @@ fun HomeScreen(
     val lighting by viewModel.lightingState.collectAsState()
     val device by viewModel.connectedDevice.collectAsState()
     val rpm by viewModel.rpmTelemetryState.collectAsState()
+    val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val presets by viewModel.presets.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
@@ -129,6 +141,7 @@ fun HomeScreen(
             item {
                 RpmGaugeCard(
                     rpm = rpm,
+                    shiftConfig = shiftConfig,
                     lighting = lighting,
                     onNavigateToRpm = onNavigateToRpm,
                     onNavigateToLighting = onNavigateToLighting
@@ -264,29 +277,32 @@ private fun ConnectionBanner(
 @Composable
 private fun RpmGaugeCard(
     rpm: RpmTelemetryState?,
+    shiftConfig: ShiftLightConfig,
     lighting: LightingState,
     onNavigateToRpm: () -> Unit,
     onNavigateToLighting: () -> Unit
 ) {
     SectionCard(
         title = "Live Engine Speed",
-        subtitle = "CAN 0x301 Byte 0 · ×40 provisional decoder",
+        subtitle = "CAN 0x301 Byte 0 · x40 provisional decoder",
         headerAction = {
             StatusPill(
-                text = "UNVERIFIED",
-                color = HardwareAmberWarning
+                text = if (rpm?.statusFlags?.isCalibrationVerified == true) "VERIFIED" else "UNVERIFIED",
+                color = if (rpm?.statusFlags?.isCalibrationVerified == true) HardwareGreenVerified else HardwareAmberWarning
             )
         }
     ) {
         val available = rpm != null && rpm.isRpmAvailable && !rpm.isStale
+        val currentRpm = if (available) rpm!!.provisionalRpm else 0
         val lightsRendering = rpm?.statusFlags?.isPhysicalShiftLightsEnabled == true
 
+        // 1. Digital RPM Speedometer Readout
         Row(
             verticalAlignment = Alignment.Bottom,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = if (available) "${rpm!!.provisionalRpm}" else "———",
+                text = if (available) String.format(Locale.US, "%,d", currentRpm) else "--",
                 style = PulseShiftMonoDisplay,
                 color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -312,16 +328,153 @@ private fun RpmGaugeCard(
                 )
                 Spacer(Modifier.height(PulseShiftSpacing.Micro))
                 Text(
-                    text = if (rpm == null) "CAN RX: —" else "CAN RX: ${rpm.totalCanFramesReceived}",
+                    text = if (rpm == null) "CAN RX: --" else "CAN RX: ${rpm.totalCanFramesReceived}",
                     style = PulseShiftMonoTiny,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
+        Spacer(Modifier.height(10.dp))
+
+        // 2. High-Tech Visual Tachometer Bar
+        val maxScaleRpm = maxOf(8000, ((shiftConfig.warningRpm + 1500) / 1000) * 1000)
+        val animatedProgress by animateFloatAsState(
+            targetValue = (currentRpm.toFloat() / maxScaleRpm).coerceIn(0f, 1f),
+            animationSpec = tween(durationMillis = 100),
+            label = "tachometerProgress"
+        )
+        val warningProgress = (shiftConfig.warningRpm.toFloat() / maxScaleRpm).coerceIn(0f, 1f)
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF14141E))
+            ) {
+                val barWidth = size.width
+                val barHeight = size.height
+
+                // Draw background track with subtle segment lines
+                val numTicks = maxScaleRpm / 1000
+                for (i in 1 until numTicks) {
+                    val tickX = barWidth * (i.toFloat() / numTicks)
+                    drawLine(
+                        color = Color(0xFF2A2A38),
+                        start = Offset(tickX, 0f),
+                        end = Offset(tickX, barHeight),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+                // Draw Warning / Redline zone background
+                val redlineStartX = barWidth * warningProgress
+                if (redlineStartX < barWidth) {
+                    drawRect(
+                        color = HardwareRedError.copy(alpha = 0.25f),
+                        topLeft = Offset(redlineStartX, 0f),
+                        size = Size(barWidth - redlineStartX, barHeight)
+                    )
+                    // Redline marker
+                    drawLine(
+                        color = HardwareRedError,
+                        start = Offset(redlineStartX, 0f),
+                        end = Offset(redlineStartX, barHeight),
+                        strokeWidth = 2.dp.toPx()
+                    )
+                }
+
+                // Draw Active Live Progress Bar with Gradient
+                if (animatedProgress > 0.005f) {
+                    val activeWidth = barWidth * animatedProgress
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color(0xFF00E676), // Bright Green
+                                Color(0xFFFFD600), // Amber / Yellow
+                                Color(0xFFFF1744)  // Shift Red
+                            ),
+                            startX = 0f,
+                            endX = barWidth
+                        ),
+                        topLeft = Offset.Zero,
+                        size = Size(activeWidth, barHeight),
+                        cornerRadius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // Tachometer scale labels (0 to max)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("0", style = PulseShiftMonoTiny, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${maxScaleRpm / 2000}k", style = PulseShiftMonoTiny, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = "SHIFT ${shiftConfig.warningRpm}",
+                    style = PulseShiftMonoTiny,
+                    fontWeight = FontWeight.Bold,
+                    color = if (available && currentRpm >= shiftConfig.warningRpm) HardwareRedError else MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+                Text("${maxScaleRpm / 1000}k", style = PulseShiftMonoTiny, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 3. Progressive 6-LED Shift Indicators (Dynamic Threshold Visualization)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val thresholds = shiftConfig.thresholds.ifEmpty { listOf(1000, 2000, 3000, 4000, 5000, 6000) }
+            for (i in 0 until 6) {
+                val thresh = thresholds.getOrElse(i) { (i + 1) * 1000 }
+                val isThresholdReached = available && (currentRpm >= thresh)
+                val isRedline = available && (currentRpm >= shiftConfig.warningRpm)
+
+                val ledColor = when {
+                    isRedline -> HardwareRedError
+                    isThresholdReached -> when (i) {
+                        0, 1 -> Color(0xFF00E676) // Green
+                        2, 3 -> Color(0xFFFFD600) // Amber
+                        4 -> Color(0xFFFF9100)    // Orange
+                        else -> HardwareRedError   // Red
+                    }
+                    else -> Color(0xFF1E1E28)
+                }
+
+                Surface(
+                    modifier = Modifier.weight(1f).height(30.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (isThresholdReached) ledColor.copy(alpha = 0.25f) else Color(0xFF13131A),
+                    border = BorderStroke(
+                        1.5.dp,
+                        if (isThresholdReached) ledColor else Color(0xFF262634)
+                    )
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = if (thresh % 1000 == 0) "${thresh / 1000}k" else String.format(Locale.US, "%.1fk", thresh / 1000f),
+                            style = PulseShiftMonoTiny,
+                            fontWeight = if (isThresholdReached) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isThresholdReached) ledColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
 
-        // Prominent 6-LED live preview
+        // 4. Prominent 6-LED live preview
         LedStripPreview(
             colors = lighting.ledColors,
             isPowerOn = lighting.isPowerOn,
@@ -346,11 +499,19 @@ private fun RpmGaugeCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            OutlinedButton(
-                onClick = onNavigateToLighting,
-                modifier = Modifier.height(38.dp)
-            ) {
-                Text("Configure")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onNavigateToRpm,
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text("Tuning")
+                }
+                Button(
+                    onClick = onNavigateToLighting,
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text("Studio")
+                }
             }
         }
     }

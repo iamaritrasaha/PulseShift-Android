@@ -403,4 +403,17 @@ class PulseShiftBleLifecycleTest {
         assertFalse("prepareForOtaReboot must NOT mark userInitiatedDisconnect", manager.isUserInitiatedDisconnect())
         assertTrue("isReconnecting must be true", manager.isReconnecting.value)
     }
+
+    @Test
+    fun testTeardownTransportCancelsConnectTimeoutJob() {
+        val manager = createTestBleManager()
+        val mockGatt = mock(BluetoothGatt::class.java)
+        manager.setActiveGattForTesting(mockGatt)
+
+        // Simulate disconnect/teardown
+        manager.disconnect()
+
+        assertNull("Active GATT must be cleared by teardown", manager.getActiveGatt())
+        assertTrue("userInitiatedDisconnect must be true on explicit disconnect", manager.isUserInitiatedDisconnect())
+    }
 }

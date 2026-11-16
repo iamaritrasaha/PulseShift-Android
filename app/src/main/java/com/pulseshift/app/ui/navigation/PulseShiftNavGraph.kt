@@ -147,19 +147,36 @@ fun PulseShiftNavGraph(
                     composable(Screen.Home.route) {
                         HomeScreen(
                             viewModel = homeViewModel,
-                            onNavigateToLighting = { navController.navigate(Screen.Lighting.route) },
-                            onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                            onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
-                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
-                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) },
-                            onNavigateToRpm = { navController.navigate(Screen.Rpm.route) }
+                            onNavigateToLighting = {
+                                navController.navigate(Screen.Lighting.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToSettings = { navController.navigate(Screen.Settings.route) { launchSingleTop = true } },
+                            onNavigateToDevices = { navController.navigate(Screen.Devices.route) { launchSingleTop = true } },
+                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) { launchSingleTop = true } },
+                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) { launchSingleTop = true } },
+                            onNavigateToRpm = { navController.navigate(Screen.Rpm.route) { launchSingleTop = true } }
                         )
                     }
 
                     composable(Screen.Lighting.route) {
                         LightingScreen(
                             viewModel = lightingViewModel,
-                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) }
+                            onNavigateToPresets = {
+                                navController.navigate(Screen.Presets.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateBack = {
+                                navController.navigate(Screen.Home.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
                         )
                     }
 
