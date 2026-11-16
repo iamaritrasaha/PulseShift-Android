@@ -163,6 +163,7 @@ fun DevicesScreen(
                         enrollmentMessage = enrollmentMessage,
                         onEnroll = { viewModel.enrollOwner(it) },
                         onAuthenticate = { viewModel.authenticate() },
+                        onClearCredential = { viewModel.clearStoredCredential() },
                         onDismissMessage = { viewModel.clearEnrollmentMessage() }
                     )
                 }
@@ -308,10 +309,12 @@ fun OwnerEnrollmentCard(
     enrollmentMessage: String?,
     onEnroll: (ByteArray) -> Unit,
     onAuthenticate: () -> Unit,
+    onClearCredential: () -> Unit = {},
     onDismissMessage: () -> Unit
 ) {
     val secureRandom = java.security.SecureRandom()
     var confirmEnrollment by remember { mutableStateOf(false) }
+    var confirmClearKey by remember { mutableStateOf(false) }
 
     if (confirmEnrollment) {
         com.pulseshift.app.ui.components.ConfirmDialog(
@@ -328,6 +331,20 @@ fun OwnerEnrollmentCard(
                 onEnroll(secret)
             },
             onDismiss = { confirmEnrollment = false }
+        )
+    }
+
+    if (confirmClearKey) {
+        com.pulseshift.app.ui.components.ConfirmDialog(
+            title = "Reset Stored Credential?",
+            text = "This removes the owner credential stored on this phone for this device. " +
+                "You will need to press the physical BOOT button on the ESP32 and enroll again to perform protected operations.",
+            confirmLabel = "Reset Credential",
+            onConfirm = {
+                confirmClearKey = false
+                onClearCredential()
+            },
+            onDismiss = { confirmClearKey = false }
         )
     }
 
@@ -373,6 +390,11 @@ fun OwnerEnrollmentCard(
                     shape = PulseShiftShapeTokens.Control,
                     modifier = Modifier.height(38.dp)
                 ) { Text("Re-authenticate") }
+                OutlinedButton(
+                    onClick = { confirmClearKey = true },
+                    shape = PulseShiftShapeTokens.Control,
+                    modifier = Modifier.height(38.dp)
+                ) { Text("Reset Key") }
             }
 
             enrollmentMessage?.let { message ->

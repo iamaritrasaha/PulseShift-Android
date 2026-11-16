@@ -101,9 +101,9 @@ class BleAuthAndLightingRegressionTest {
     }
 
     @Test
-    fun testUnenrolledEsp32RejectsChallengeAndClearsStaleAndroidKeyStoreCredential() {
+    fun testUnenrolledEsp32RejectsChallengeWithoutDeletingAndroidKeyStoreCredential() {
         runBlocking {
-            // Setup: Android has an old enrolled secret for this device MAC
+            // Setup: Android has an enrolled secret for this device MAC
             val dummySecret = ByteArray(12) { 0x42.toByte() }
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
@@ -137,12 +137,120 @@ class BleAuthAndLightingRegressionTest {
             // 1. Must return false (authentication not established)
             assertFalse("Authentication must fail when ESP32 has no enrolled owner", authSuccess)
 
-            // 2. Stale local credential must be cleared from Android KeyStore
-            verify(mockCredentialManager).clearEnrolledSecret(testDevice.address)
+            // 2. KeyStore credential must NOT be automatically deleted without user confirmation
+            verify(mockCredentialManager, never()).clearEnrolledSecret(any())
 
-            // 3. AuthState must transition directly to NOT_ENROLLED
+            // 3. AuthState must transition to AUTHENTICATION_REJECTED
+            assertEquals(AuthState.AUTHENTICATION_REJECTED, repository.authState.value)
+            assertFalse(repository.isAuthenticated.value)
+        }
+    }
+
+    @Test
+    fun testExplicitCredentialClearRequiresUserActionAndClearsKeyStore() {
+        runBlocking {
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            connectedDeviceFlow.value = testDevice
+
+            val repository = createRepository()
+            repository.setAuthenticatedForTesting(true)
+            repository.setNvsConfirmedForTesting(true)
+
+            val cleared = repository.clearStoredOwnerCredential()
+            assertTrue("Explicit credential clear must succeed", cleared)
+
+            verify(mockCredentialManager).clearEnrolledSecret(testDevice.address)
             assertEquals(AuthState.NOT_ENROLLED, repository.authState.value)
             assertFalse(repository.isAuthenticated.value)
+            assertFalse(repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
+    fun testAckTimeoutPreservesStateIfSnapshotConfirmsApplied() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_POWER -> {
+                        // Simulate timeout by dropping ACK response
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        // Return snapshot showing ESP32 successfully applied power = false
+                        val snapshot = ConfigSnapshot(
+                            isValid = true,
+                            snapshotId = seq,
+                            activeRevision = 2,
+                            isPowerOn = false,
+                            brightness = 200,
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = List(6) { RgbColor.BrandViolet },
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = snapshot
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue("Precondition: Auth must succeed", authOk)
+            assertTrue(repository.isAuthenticated.value)
+
+            // Power is initially true; we set to false. ACK will time out, but snapshot confirms power = false.
+            repository.setPower(false)
+
+            assertFalse("Power state must remain false because snapshot confirmed it was applied", repository.lightingState.value.isPowerOn)
+            assertTrue("hasUnsavedChanges must be true since change is in RAM only", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be false until explicit save", repository.isNvsConfirmed.value)
+            assertTrue("isHardwareConfirmed must be true from confirmed snapshot", repository.lightingState.value.isHardwareConfirmed)
         }
     }
 
@@ -302,9 +410,9 @@ class BleAuthAndLightingRegressionTest {
         fun resolveHeaderStatusPill(isAuthenticated: Boolean, unsaved: Boolean, isConfirmed: Boolean): String {
             return when {
                 !isAuthenticated -> "UNAUTHENTICATED"
-                unsaved -> "RAM ONLY"
+                unsaved -> "RAM ONLY (UNSAVED)"
                 isConfirmed -> "PERSISTED (NVS)"
-                else -> "UNVERIFIED"
+                else -> "RAM ACTIVE (UNSAVED)"
             }
         }
 
@@ -314,7 +422,7 @@ class BleAuthAndLightingRegressionTest {
                 !isAuthenticated -> "AUTH REQUIRED"
                 unsaved -> "RAM ACTIVE (UNSAVED)"
                 isConfirmed -> "SAVED IN FLASH"
-                else -> "UNVERIFIED"
+                else -> "RAM ONLY (UNSAVED)"
             }
         }
 
@@ -328,10 +436,14 @@ class BleAuthAndLightingRegressionTest {
         assertEquals("AUTH REQUIRED", resolvePersistenceStatusPill(isAuthenticated = false, unsaved = true, isConfirmed = false))
 
         // Case 3: Authenticated with unsaved changes in RAM
-        assertEquals("RAM ONLY", resolveHeaderStatusPill(isAuthenticated = true, unsaved = true, isConfirmed = false))
+        assertEquals("RAM ONLY (UNSAVED)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = true, isConfirmed = false))
         assertEquals("RAM ACTIVE (UNSAVED)", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = true, isConfirmed = false))
 
-        // Case 4: Authenticated and successfully persisted to flash (NVS confirmed)
+        // Case 4: Authenticated without unsaved changes, but not yet confirmed saved to NVS
+        assertEquals("RAM ACTIVE (UNSAVED)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = false))
+        assertEquals("RAM ONLY (UNSAVED)", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = false))
+
+        // Case 5: Authenticated and successfully persisted to flash (NVS confirmed)
         assertEquals("PERSISTED (NVS)", resolveHeaderStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = true))
         assertEquals("SAVED IN FLASH", resolvePersistenceStatusPill(isAuthenticated = true, unsaved = false, isConfirmed = true))
     }

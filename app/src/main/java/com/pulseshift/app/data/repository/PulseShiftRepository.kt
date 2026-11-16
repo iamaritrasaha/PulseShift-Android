@@ -30,6 +30,7 @@ interface PulseShiftRepository {
     val shiftLightConfig: StateFlow<ShiftLightConfig>
     val configSnapshot: StateFlow<ConfigSnapshot?>
     val hasUnsavedChanges: StateFlow<Boolean>
+    val isNvsConfirmed: StateFlow<Boolean>
     val lastAckResponse: SharedFlow<ConfigAckResponse>
 
     // Transport state (wrapped from the BLE manager so screens have one source)
@@ -51,6 +52,7 @@ interface PulseShiftRepository {
     val isAuthenticated: StateFlow<Boolean>
     suspend fun enrollOwner(secret: ByteArray): Boolean
     suspend fun authenticateChallengeResponse(): Boolean
+    suspend fun clearStoredOwnerCredential(): Boolean
 
     // Configuration Controls
     suspend fun setPower(power: Boolean)

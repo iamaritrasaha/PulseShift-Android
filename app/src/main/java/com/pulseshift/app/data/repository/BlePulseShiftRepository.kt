@@ -107,6 +107,9 @@ class BlePulseShiftRepository(
     private val _isAuthenticated = MutableStateFlow(false)
     override val isAuthenticated: StateFlow<Boolean> = _isAuthenticated.asStateFlow()
 
+    private val _isNvsConfirmed = MutableStateFlow(false)
+    override val isNvsConfirmed: StateFlow<Boolean> = _isNvsConfirmed.asStateFlow()
+
     private val _authState = MutableStateFlow(AuthState.NOT_ENROLLED)
     override val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
@@ -414,6 +417,7 @@ class BlePulseShiftRepository(
                             _isAuthenticated.value = false
                             _authState.value = AuthState.SESSION_EXPIRED
                         }
+                        _isNvsConfirmed.value = false
                         _historicalPageLoadingState.value = HistoricalLogLoadingState.Idle
                         if (_captureExportState.value is CaptureExportState.Exporting) {
                             _captureExportState.value = CaptureExportState.Idle
@@ -503,6 +507,11 @@ class BlePulseShiftRepository(
     }
 
     @androidx.annotation.VisibleForTesting
+    internal fun setNvsConfirmedForTesting(confirmed: Boolean) {
+        _isNvsConfirmed.value = confirmed
+    }
+
+    @androidx.annotation.VisibleForTesting
     internal var commandSenderForTesting: (suspend (ByteArray, Int, Byte, Long) -> ConfigAckResponse?)? = null
 
     internal suspend fun sendCommand(
@@ -545,6 +554,7 @@ class BlePulseShiftRepository(
                 if (saved) {
                     _authState.value = AuthState.AUTHENTICATED
                     _isAuthenticated.value = true
+                    _isNvsConfirmed.value = true
                     true
                 } else {
                     Log.e("PulseShiftRepo", "ESP32 enrolled successfully but Android KeyStore credential persistence failed!")
@@ -586,15 +596,9 @@ class BlePulseShiftRepository(
 
         if (ackChallenge == null || !ackChallenge.isSuccess || ackChallenge.payload.size < 4) {
             Log.e("PulseShiftRepo", "REQUEST_CHALLENGE failed: status=${ackChallenge?.statusCode}")
-            if (ackChallenge?.statusCode == PulseShiftBleProtocol.STATUS_ERR_INVALID_STATE || ackChallenge?.isAuthRequired == true) {
-                // ESP32 has no owner enrolled in hardware (e.g. following a firmware re-flash or erased NVS).
-                // The local secret is stale and must be cleared so the owner can re-enroll cleanly via the BOOT button.
-                Log.w("PulseShiftRepo", "ESP32 reported un-enrolled state; clearing stale local credential for $deviceAddress")
-                credentialManager.clearEnrolledSecret(deviceAddress)
-                _authState.value = AuthState.NOT_ENROLLED
-            } else {
-                _authState.value = AuthState.AUTHENTICATION_REJECTED
-            }
+            // Do NOT automatically delete stored credentials on error; preserve local key in Keystore
+            // and let the user re-authenticate, enroll to recover, or explicitly reset via confirmation.
+            _authState.value = AuthState.AUTHENTICATION_REJECTED
             _isAuthenticated.value = false
             return false
         }
@@ -626,6 +630,37 @@ class BlePulseShiftRepository(
         val deviceAddress = bleManager.connectedDevice.value?.address ?: return false
         return transactionMutex.withLock {
             internalAuthenticate(deviceAddress)
+        }
+    }
+
+    override suspend fun clearStoredOwnerCredential(): Boolean {
+        val deviceAddress = bleManager.connectedDevice.value?.address ?: return false
+        return transactionMutex.withLock {
+            credentialManager.clearEnrolledSecret(deviceAddress)
+            _authState.value = AuthState.NOT_ENROLLED
+            _isAuthenticated.value = false
+            _isNvsConfirmed.value = false
+            true
+        }
+    }
+
+    private fun isChangeAppliedInSnapshot(snapshot: ConfigSnapshot, opcode: Byte): Boolean {
+        return when (opcode) {
+            PulseShiftBleProtocol.V2_OPCODE_SET_POWER -> snapshot.isPowerOn == draftPower
+            PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS -> snapshot.brightness == draftBrightness
+            PulseShiftBleProtocol.V2_OPCODE_SET_EFFECT ->
+                snapshot.effect == draftEffect && snapshot.effectSpeed == draftEffectSpeed
+            PulseShiftBleProtocol.V2_OPCODE_SET_GLOBAL_RGB ->
+                snapshot.globalColor == draftLedColors.firstOrNull() || snapshot.ledColors.all { it == draftLedColors.firstOrNull() }
+            PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB -> snapshot.ledColors == draftLedColors
+            PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP ->
+                snapshot.startupAnimation == draftStartupAnimation && snapshot.startupDurationMs == draftStartupDurationMs
+            PulseShiftBleProtocol.V2_OPCODE_SET_LED_DIRECTION -> snapshot.ledDirection == draftLedDirection
+            PulseShiftBleProtocol.V2_OPCODE_SET_WARNING_RGB -> snapshot.warningColor == draftWarningColor
+            PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD -> snapshot.rpmThresholds == draftThresholds
+            PulseShiftBleProtocol.V2_OPCODE_SET_SHIFT_WARNING ->
+                snapshot.warningRpm == draftWarningRpm && snapshot.warningPatternId == draftWarningStyleId
+            else -> false
         }
     }
 
@@ -676,6 +711,16 @@ class BlePulseShiftRepository(
                 }
             }
             if (ack == null) {
+                Log.w("PulseShiftRepo", "Timeout waiting ACK for $label (opcode 0x${opcode.toString(16)}). Querying fresh device snapshot to verify...")
+                val seqSnap = nextSeq()
+                val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
+                if (snapshot != null && snapshot.isValid && isChangeAppliedInSnapshot(snapshot, opcode)) {
+                    Log.i("PulseShiftRepo", "Fresh device snapshot confirmed change for $label was applied by ESP32 despite ACK timeout.")
+                    applyAuthoritativeSnapshot(snapshot)
+                    _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
+                    return@withLock true
+                }
                 _lightingError.tryEmit("No acknowledgement from device for $label (timeout).")
                 _lightingState.value = previousState.copy(isPendingSync = false, isHardwareConfirmed = false)
                 _hasUnsavedChanges.value = prevHasUnsaved
@@ -704,6 +749,8 @@ class BlePulseShiftRepository(
                 draftWarningColor = prevDraftWarningColor
                 false
             } else {
+                _hasUnsavedChanges.value = true
+                _isNvsConfirmed.value = false
                 _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = true)
                 true
             }
@@ -809,11 +856,22 @@ class BlePulseShiftRepository(
                 if (ack == null || !ack.isSuccess) allOk = false
             }
             if (!allOk) {
+                val seqSnap = nextSeq()
+                val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
+                if (snapshot != null && snapshot.isValid && snapshot.ledColors == colors) {
+                    Log.i("PulseShiftRepo", "Fresh device snapshot confirmed all LED colors were applied by ESP32 despite ACK timeout.")
+                    applyAuthoritativeSnapshot(snapshot)
+                    _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
+                    return@withLock
+                }
                 _lightingError.tryEmit("One or more LED color writes were not acknowledged.")
                 _lightingState.value = previousState.copy(isPendingSync = false, isHardwareConfirmed = false)
                 _hasUnsavedChanges.value = prevHasUnsaved
                 draftLedColors = prevDraftColors.toMutableList()
             } else {
+                _hasUnsavedChanges.value = true
+                _isNvsConfirmed.value = false
                 _lightingState.value = _lightingState.value.copy(isPendingSync = false, isHardwareConfirmed = true)
             }
         }
@@ -903,12 +961,26 @@ class BlePulseShiftRepository(
             if (ackWarn == null || !ackWarn.isSuccess) allOk = false
 
             if (!allOk) {
+                val seqSnap = nextSeq()
+                val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
+                if (snapshot != null && snapshot.isValid &&
+                    snapshot.rpmThresholds == config.thresholds &&
+                    snapshot.warningRpm == config.warningRpm &&
+                    snapshot.warningPatternId == config.warningStyle.id) {
+                    applyAuthoritativeSnapshot(snapshot)
+                    _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
+                    return@withLock
+                }
                 _lightingError.tryEmit("One or more threshold/warning writes were not acknowledged.")
                 _shiftLightConfig.value = previousShiftLight
                 draftThresholds = prevDraftThresholds.toMutableList()
                 draftWarningRpm = prevDraftWarningRpm
                 draftWarningStyleId = prevDraftWarningStyleId
                 draftWarningColor = prevDraftWarningColor
+            } else {
+                _hasUnsavedChanges.value = true
+                _isNvsConfirmed.value = false
             }
         }
     }
@@ -930,7 +1002,18 @@ class BlePulseShiftRepository(
                 opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD
             )
             if (ack == null || !ack.isSuccess) {
+                val seqSnap = nextSeq()
+                val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
+                if (snapshot != null && snapshot.isValid && snapshot.rpmThresholds == draftThresholds) {
+                    applyAuthoritativeSnapshot(snapshot)
+                    _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
+                    return@withLock
+                }
                 _lightingError.tryEmit("Threshold write for LED ${index + 1} was not acknowledged.")
+            } else {
+                _hasUnsavedChanges.value = true
+                _isNvsConfirmed.value = false
             }
         }
     }
@@ -1052,6 +1135,7 @@ class BlePulseShiftRepository(
                     snapshot.canCandidateId == canId && snapshot.candidateByteIndex == byteIndex &&
                     snapshot.isExtendedFrame == isExtended && abs(snapshot.rpmMultiplier - multiplier) < 0.05f) {
                     _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
                     Log.d("PulseShiftRepo", "Decoder configuration applied successfully.")
                 } else {
                     Log.e("PulseShiftRepo", "Snapshot validation failed after applying decoder configuration.")
@@ -1258,6 +1342,7 @@ class BlePulseShiftRepository(
                         isHardwareConfirmed = true
                     )
                     _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
                     recordDeviceCommand("Apply preset", DeviceCommandPhase.APPLIED, "Preset '${preset.name}' applied to hardware (RAM)")
                 } else {
                     Log.e("PulseShiftRepo", "Snapshot readback validation failed after COMMIT_TRANSACTION")
@@ -1452,6 +1537,7 @@ class BlePulseShiftRepository(
                 // Successful persistence strictly requires ACK.isSuccess && ACK.isPersisted
                 val isPersisted = ackSave != null && ackSave.isSuccess && ackSave.isPersisted
                 _hasUnsavedChanges.value = !isPersisted
+                _isNvsConfirmed.value = isPersisted
 
                 // 7. Request authoritative snapshot to synchronize UI
                 val seqSnap = nextSeq()
@@ -1574,6 +1660,7 @@ class BlePulseShiftRepository(
                 updateDraftsFromSnapshot(snapshot)
             }
             _hasUnsavedChanges.value = false
+            _isNvsConfirmed.value = true
             _lightingState.value = _lightingState.value.copy(
                 isHardwareConfirmed = true,
                 isPendingSync = false
@@ -1590,6 +1677,8 @@ class BlePulseShiftRepository(
             val snapshot = requestAndWaitSnapshot(seq)
             if (snapshot != null && snapshot.isValid) {
                 applyAuthoritativeSnapshot(snapshot)
+                _isNvsConfirmed.value = true
+                _hasUnsavedChanges.value = false
             }
             snapshot
         }
@@ -1614,6 +1703,8 @@ class BlePulseShiftRepository(
                 val snapshot = requestAndWaitSnapshot(seqSnap)
                 if (snapshot != null && snapshot.isValid) {
                     applyAuthoritativeSnapshot(snapshot)
+                    _isNvsConfirmed.value = false
+                    _hasUnsavedChanges.value = true
                 }
             } else {
                 Log.e("PulseShiftRepo", "RESTORE_DEFAULTS failed: status=${ackRestore?.statusCode}")

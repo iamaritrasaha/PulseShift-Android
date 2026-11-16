@@ -105,6 +105,7 @@ fun LightingScreen(
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val snapshot by viewModel.configSnapshot.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
+    val isNvsConfirmed by viewModel.isNvsConfirmed.collectAsState()
     val selectedLed by viewModel.selectedLedIndex.collectAsState()
     val isBusy by viewModel.isBusy.collectAsState()
     val isAuthenticated by viewModel.isAuthenticated.collectAsState()
@@ -236,12 +237,12 @@ fun LightingScreen(
                             StatusPill(
                                 text = when {
                                     !isAuthenticated -> "UNAUTHENTICATED"
-                                    unsaved -> "RAM ONLY"
-                                    snapshot != null || lighting.isHardwareConfirmed -> "PERSISTED (NVS)"
-                                    else -> "UNVERIFIED"
+                                    unsaved -> "RAM ONLY (UNSAVED)"
+                                    isNvsConfirmed -> "PERSISTED (NVS)"
+                                    else -> "RAM ACTIVE (UNSAVED)"
                                 },
                                 color = when {
-                                    !isAuthenticated || unsaved -> HardwareAmberWarning
+                                    !isAuthenticated || unsaved || !isNvsConfirmed -> HardwareAmberWarning
                                     else -> HardwareGreenVerified
                                 }
                             )
@@ -451,11 +452,11 @@ fun LightingScreen(
                                 text = when {
                                     !isAuthenticated -> "AUTH REQUIRED"
                                     unsaved -> "RAM ACTIVE (UNSAVED)"
-                                    snapshot != null || lighting.isHardwareConfirmed -> "SAVED IN FLASH"
-                                    else -> "UNVERIFIED"
+                                    isNvsConfirmed -> "SAVED IN FLASH"
+                                    else -> "RAM ONLY (UNSAVED)"
                                 },
                                 color = when {
-                                    !isAuthenticated || unsaved -> HardwareAmberWarning
+                                    !isAuthenticated || unsaved || !isNvsConfirmed -> HardwareAmberWarning
                                     else -> HardwareGreenVerified
                                 }
                             )
@@ -484,7 +485,7 @@ fun LightingScreen(
                                 Text(
                                     when {
                                         !isAuthenticated -> "Authentication Required to Save"
-                                        unsaved -> "Save Changes to ESP32 Flash (NVS)"
+                                        unsaved || !isNvsConfirmed -> "Save Changes to ESP32 Flash (NVS)"
                                         else -> "All Saved to Flash — Tap to Re-Commit"
                                     },
                                     fontWeight = FontWeight.Bold

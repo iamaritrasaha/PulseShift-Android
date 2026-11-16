@@ -462,6 +462,9 @@ class FakePulseShiftRepository : PulseShiftRepository {
     private val _hasUnsavedChanges = MutableStateFlow(false)
     override val hasUnsavedChanges: StateFlow<Boolean> = _hasUnsavedChanges.asStateFlow()
 
+    private val _isNvsConfirmed = MutableStateFlow(false)
+    override val isNvsConfirmed: StateFlow<Boolean> = _isNvsConfirmed.asStateFlow()
+
     private val _lastAckResponse = MutableSharedFlow<ConfigAckResponse>()
     override val lastAckResponse: SharedFlow<ConfigAckResponse> = _lastAckResponse.asSharedFlow()
 
@@ -506,6 +509,7 @@ class FakePulseShiftRepository : PulseShiftRepository {
 
     override suspend fun enrollOwner(secret: ByteArray): Boolean = false
     override suspend fun authenticateChallengeResponse(): Boolean = false
+    override suspend fun clearStoredOwnerCredential(): Boolean = false
     override suspend fun setPower(power: Boolean) {}
     override suspend fun setBrightness(brightness: Int) {}
     override suspend fun setEffect(effect: EffectType): Boolean = true
