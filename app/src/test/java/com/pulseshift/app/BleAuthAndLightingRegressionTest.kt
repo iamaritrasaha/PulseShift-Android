@@ -62,7 +62,7 @@ class BleAuthAndLightingRegressionTest {
         mockDataStore = mock()
         mockCredentialManager = mock()
 
-        connectionStateFlow = MutableStateFlow(BleConnectionState.DISCONNECTED)
+        connectionStateFlow = MutableStateFlow(BleConnectionState.CONNECTED_WAITING_FOR_DATA)
         connectedDeviceFlow = MutableStateFlow(null)
         configAcksFlow = MutableSharedFlow<ConfigAckResponse>(extraBufferCapacity = 16)
         configSnapshotsFlow = MutableStateFlow<ConfigSnapshot?>(null)
@@ -111,6 +111,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             // Mock enqueueConfigCommand BEFORE repository initialization to avoid concurrent stubbing race
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
@@ -154,6 +155,7 @@ class BleAuthAndLightingRegressionTest {
         runBlocking {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val repository = createRepository()
             repository.setAuthenticatedForTesting(true)
@@ -176,6 +178,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
@@ -262,6 +265,7 @@ class BleAuthAndLightingRegressionTest {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
             whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
@@ -356,6 +360,7 @@ class BleAuthAndLightingRegressionTest {
         runBlocking {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(false)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val repository = createRepository()
 
@@ -393,6 +398,7 @@ class BleAuthAndLightingRegressionTest {
         runBlocking {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(false)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val repository = createRepository()
             assertFalse(repository.isAuthenticated.value)
@@ -418,6 +424,7 @@ class BleAuthAndLightingRegressionTest {
         runBlocking {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(false)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             val repository = createRepository()
             assertFalse(repository.isAuthenticated.value)
@@ -529,6 +536,7 @@ class BleAuthAndLightingRegressionTest {
             val secret = ByteArray(12) { 0x33.toByte() }
             whenever(mockCredentialManager.saveEnrolledSecret(testDevice.address, secret)).thenReturn(true)
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
@@ -564,6 +572,7 @@ class BleAuthAndLightingRegressionTest {
     fun testReloadConfigFromControllerVerifiesHardwareRamWithoutMarkingNvsConfirmed() {
         runBlocking {
             connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
