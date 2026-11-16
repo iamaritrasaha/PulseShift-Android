@@ -36,6 +36,12 @@ class TerminalRegistryTest {
     }
 
     @Test
+    fun `rpm status prints configured CAN candidate ID when present`() {
+        val text = TerminalCommandRegistry.formatRpmStatus(freshRpm(0x01), null, configuredCanId = 0x280)
+        assertTrue(text.contains("CAN ID       0x280 (configured)"))
+    }
+
+    @Test
     fun `rpm status prints VERIFIED and rendering when flags set`() {
         // bit3 (SHIFT_LIGHTS_ENABLED) set alongside fresh + verified.
         val text = TerminalCommandRegistry.formatRpmStatus(freshRpm(0x0B), null)

@@ -93,6 +93,7 @@ class TerminalViewModel(
     private var lastLoggedMessageId = -1
     private var monitorJob: Job? = null
     private var dumpJob: Job? = null
+    private var logsJob: Job? = null
     private var dumpCursor = 0L
     private var logCursor = 0L
 
@@ -114,6 +115,11 @@ class TerminalViewModel(
                             dumpJob?.cancel()
                             dumpJob = null
                             append(TerminalLineType.ERROR, "[DUMP] Request failed: BLE link disconnected.")
+                        }
+                        if (logsJob?.isActive == true) {
+                            logsJob?.cancel()
+                            logsJob = null
+                            append(TerminalLineType.ERROR, "[LOGS] Request failed: BLE link disconnected.")
                         }
                         append(TerminalLineType.SYSTEM, "-- link down --")
                     }
@@ -312,10 +318,12 @@ class TerminalViewModel(
     private fun printRpmStatus() {
         runCommand {
             val rpm = repository.rpmTelemetryState.value
+            val canId = repository.configSnapshot.value?.canCandidateId
+            val idStr = if (canId != null) "0x${canId.toString(16).uppercase()}" else "0x301"
             if (rpm == null) {
-                INFO to "CAN ID 0x301 (configured) — waiting for the first matching frame on this link."
+                INFO to "CAN ID $idStr (configured) - waiting for the first matching frame on this link."
             } else {
-                INFO to TerminalCommandRegistry.formatRpmStatus(rpm, repository.connectedDevice.value)
+                INFO to TerminalCommandRegistry.formatRpmStatus(rpm, repository.connectedDevice.value, canId)
             }
         }
     }
@@ -430,20 +438,16 @@ class TerminalViewModel(
             return
         }
         _isBusy.value = true
-        viewModelScope.launch {
+        logsJob = viewModelScope.launch {
             try {
                 val start = logCursor
-                append(TerminalLineType.INFO, "[LOGS] Requested historical log page from byte offset $start…")
+                append(TerminalLineType.INFO, "[LOGS] Requested historical log page from byte offset $start...")
 
                 val receivedMessages = mutableListOf<String>()
                 var pageEnd: HistoricalPageEnd? = null
                 var firmwareError: String? = null
                 val done = CompletableDeferred<Unit>()
-                // completedMessages replays its last message on subscribe; the
-                // replay is consumed during subscription below. Timestamps
-                // after this point may represent responses to THIS request —
-                // but never a stale replayed error.
-                var startedAtMs = 0L
+                val startedAtMs = System.currentTimeMillis()
 
                 val collectJob = launch {
                     launch {
@@ -451,7 +455,7 @@ class TerminalViewModel(
                             if (msg.severity == LogSeverity.ERROR && msg.timestampMs > startedAtMs) {
                                 firmwareError = msg.messageText
                                 done.complete(Unit)
-                            } else {
+                            } else if (msg.timestampMs >= startedAtMs) {
                                 receivedMessages.add(msg.messageText)
                             }
                         }
@@ -461,7 +465,6 @@ class TerminalViewModel(
                         done.complete(Unit)
                     }
                 }
-                startedAtMs = System.currentTimeMillis()
 
                 bleManager.requestHistoricalLogPage(start)
 
@@ -475,9 +478,11 @@ class TerminalViewModel(
                     append(TerminalLineType.ERROR, "[LOGS] Request failed: firmware rejected ($firmwareError).")
                 } else if (pageEnd != null) {
                     logCursor = pageEnd!!.nextOffset
+                    receivedMessages.forEach { append(TerminalLineType.INFO, it) }
                     append(TerminalLineType.INFO, "[LOGS] Received ${receivedMessages.size} log messages in page.")
                     append(TerminalLineType.ACK, "[LOGS] Completed page: next offset $logCursor${if (pageEnd!!.isFinished) " (end of logs)" else ""}.")
                 } else if (receivedMessages.isNotEmpty()) {
+                    receivedMessages.forEach { append(TerminalLineType.INFO, it) }
                     append(TerminalLineType.INFO, "[LOGS] Received ${receivedMessages.size} log messages.")
                     append(TerminalLineType.WARN, "[LOGS] Completed with partial page (timed out waiting for end-of-page).")
                 } else if (!completedInTime) {
@@ -487,6 +492,7 @@ class TerminalViewModel(
                 append(TerminalLineType.ERROR, "[LOGS] Request failed: ${e.message ?: "unexpected error"}")
             } finally {
                 _isBusy.value = false
+                logsJob = null
             }
         }
     }
@@ -579,6 +585,10 @@ class TerminalViewModel(
                 var lastProgressAt = System.currentTimeMillis()
                 while (true) {
                     val state = repository.captureExportState.value
+                    if (state is CaptureExportState.Idle) {
+                        append(TerminalLineType.WARN, "[DUMP ALL] Export terminated or cancelled.")
+                        return@launch
+                    }
                     if (state is CaptureExportState.Failed) {
                         append(TerminalLineType.ERROR, "[DUMP ALL] Export failed: ${state.reason}")
                         return@launch
@@ -645,7 +655,7 @@ class TerminalViewModel(
         // completedMessages replays its last message on subscribe; the replay
         // is consumed during subscription below. Only errors assembled after
         // this point may represent a firmware rejection of THIS request.
-        var startedAtMs = 0L
+        val startedAtMs = System.currentTimeMillis()
 
         val job = viewModelScope.launch {
             launch {
@@ -669,7 +679,6 @@ class TerminalViewModel(
                 }
             }
         }
-        startedAtMs = System.currentTimeMillis()
 
         try {
             sendRequest()

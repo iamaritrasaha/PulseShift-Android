@@ -94,6 +94,13 @@ class DiagnosticLogReassembler {
             }
 
             // Store chunk in message map
+            if (flags.isFirstChunk || chunkIndex == 0) {
+                activeMessages.remove(messageId)
+                messageFirstReceived.remove(messageId)
+                messageIsHistorical.remove(messageId)
+                messageIsCaptureLine.remove(messageId)
+            }
+
             val chunksMap = activeMessages.computeIfAbsent(messageId) {
                 messageFirstReceived[messageId] = System.currentTimeMillis()
                 messageIsHistorical[messageId] = isHistorical || flags.isError

@@ -1,5 +1,6 @@
 package com.pulseshift.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -198,7 +199,7 @@ fun SectionCard(
     }
 }
 
-/** Fine-step numeric control with 48dp touch targets for motorcycle gloves. */
+/** Fine-step numeric control with touch targets for automotive interface. */
 @Composable
 fun StepperControl(
     value: Int,
@@ -209,31 +210,41 @@ fun StepperControl(
     unit: String = "RPM",
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+        modifier = modifier
     ) {
-        IconButton(
-            onClick = { if (value - step >= min) onValueChange(value - step) },
-            enabled = value > min,
-            modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         ) {
-            Icon(Icons.Rounded.Remove, contentDescription = "Decrease $unit")
-        }
+            IconButton(
+                onClick = { if (value - step >= min) onValueChange(value - step) },
+                enabled = value > min,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Rounded.Remove, contentDescription = "Decrease $unit", modifier = Modifier.size(18.dp))
+            }
 
-        Text(
-            text = "$value $unit",
-            style = PulseShiftMonoMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
+            Text(
+                text = "$value $unit",
+                style = PulseShiftMonoSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 8.dp),
+                maxLines = 1,
+                softWrap = false
+            )
 
-        IconButton(
-            onClick = { if (value + step <= max) onValueChange(value + step) },
-            enabled = value < max,
-            modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-        ) {
-            Icon(Icons.Rounded.Add, contentDescription = "Increase $unit")
+            IconButton(
+                onClick = { if (value + step <= max) onValueChange(value + step) },
+                enabled = value < max,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = "Increase $unit", modifier = Modifier.size(18.dp))
+            }
         }
     }
 }

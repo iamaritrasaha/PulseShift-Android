@@ -53,6 +53,7 @@ class LightingViewModel(
     private var speedThrottleJob: Job? = null
     private var colorThrottleJob: Job? = null
     private var startupThrottleJob: Job? = null
+    private var warningThrottleJob: Job? = null
     private val thresholdJobs = Array<Job?>(6) { null }
 
     fun selectLed(index: Int) {
@@ -165,7 +166,9 @@ class LightingViewModel(
             warningStyle = style,
             colors = updatedColors
         )
-        viewModelScope.launch {
+        warningThrottleJob?.cancel()
+        warningThrottleJob = viewModelScope.launch {
+            delay(120)
             repository.updateShiftLightConfig(updated)
             repository.setWarningRgb(warningColor)
         }

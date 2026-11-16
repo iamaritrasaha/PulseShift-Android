@@ -54,6 +54,12 @@ class ConfigSnapshotReassembler {
 
             val chunkPayload = bytes.copyOfRange(6, 6 + payloadLength)
 
+            if (chunkIndex == 0) {
+                activeSnapshots.remove(snapshotId)
+                snapshotTotalChunks.remove(snapshotId)
+                snapshotFirstReceived.remove(snapshotId)
+            }
+
             val chunksMap = activeSnapshots.computeIfAbsent(snapshotId) {
                 snapshotTotalChunks[snapshotId] = totalChunks
                 snapshotFirstReceived[snapshotId] = System.currentTimeMillis()

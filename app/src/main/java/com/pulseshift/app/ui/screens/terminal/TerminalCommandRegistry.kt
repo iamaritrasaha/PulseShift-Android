@@ -49,8 +49,9 @@ object TerminalCommandRegistry {
         return "t=${rpm.uptimeMs}s  $value  raw=${rpm.rawCandidateCanValue}  age=${rpm.rpmSampleAgeMs}ms"
     }
 
-    fun formatRpmStatus(rpm: RpmTelemetryState, device: BleDevice?): String = buildString {
-        appendLine("CAN ID       0x301 (configured)")
+    fun formatRpmStatus(rpm: RpmTelemetryState, device: BleDevice? = null, configuredCanId: Long? = null): String = buildString {
+        val idStr = if (configuredCanId != null) "0x${configuredCanId.toString(16).uppercase()} (configured)" else "0x301 (default)"
+        appendLine("CAN ID       $idStr")
         appendLine("Raw value    ${rpm.rawCandidateCanValue}")
         appendLine("Estimated    ${if (rpm.isRpmAvailable && !rpm.isStale) "${rpm.provisionalRpm} RPM" else "---"}")
         appendLine("Sample age   ${rpm.rpmSampleAgeMs} ms")

@@ -324,7 +324,7 @@ fun DeviceCaptureTab(
     onCancelCaptureExport: () -> Unit
 ) {
     val connected = connectedDevice != null
-    val exporting = captureExportState is com.pulseshift.app.domain.model.CaptureExportState.Exporting
+    val exporting = captureExportState is com.pulseshift.app.domain.model.CaptureExportState.Exporting && !captureExportState.isFinished
     val recording = report?.captureRecording ?: false
 
     Column(

@@ -88,7 +88,9 @@ class PulseShiftDataStore(private val context: Context) {
                     if (!hasStartupDur) additions.add("\"startupDurationMs\":2000")
 
                     if (additions.isNotEmpty()) {
-                        val prefix = if (inner.isNotEmpty()) "$inner," else ""
+                        val prefix = if (inner.isNotEmpty()) {
+                            if (inner.endsWith(",")) inner else "$inner,"
+                        } else ""
                         s = "{$prefix${additions.joinToString(",")}}"
                     }
                 }
