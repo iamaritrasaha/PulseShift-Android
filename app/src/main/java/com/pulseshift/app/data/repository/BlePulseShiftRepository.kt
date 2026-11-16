@@ -714,15 +714,20 @@ class BlePulseShiftRepository(
                 val seqSnap = nextSeq()
                 val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
                 if (snapshot != null && snapshot.isValid) {
-                    if (isChangeAppliedInSnapshot(snapshot, opcode)) {
+                    val applied = isChangeAppliedInSnapshot(snapshot, opcode)
+                    applyAuthoritativeSnapshot(snapshot)
+                    if (applied) {
                         Log.i("PulseShiftRepo", "Fresh device snapshot confirmed change for $label was applied by ESP32 despite ACK timeout.")
+                        _hasUnsavedChanges.value = true
+                        _isNvsConfirmed.value = false
+                        return@withLock true
                     } else {
                         Log.w("PulseShiftRepo", "Fresh device snapshot shows change for $label was not applied by ESP32.")
+                        _lightingError.tryEmit("Command for $label timed out and controller state confirms change was not applied.")
+                        _hasUnsavedChanges.value = prevHasUnsaved
+                        _isNvsConfirmed.value = false
+                        return@withLock false
                     }
-                    applyAuthoritativeSnapshot(snapshot)
-                    _hasUnsavedChanges.value = true
-                    _isNvsConfirmed.value = false
-                    return@withLock true
                 }
                 // If a BLE command times out and the snapshot request also fails,
                 // the app must NOT restore the old UI state, because the controller may
@@ -1043,6 +1048,7 @@ class BlePulseShiftRepository(
         transactionMutex.withLock {
             if (!bleManager.hasConfigV2Support()) return@withLock
             if (!requireAuthenticated()) return@withLock
+            val prevHasUnsaved = _hasUnsavedChanges.value
             draftThresholds = draftThresholds.toMutableList().also { it[index] = rpm }
             _shiftLightConfig.value = _shiftLightConfig.value.copy(thresholds = draftThresholds.toList())
             _hasUnsavedChanges.value = true
@@ -1056,9 +1062,14 @@ class BlePulseShiftRepository(
                 val seqSnap = nextSeq()
                 val snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 2500L)
                 if (snapshot != null && snapshot.isValid) {
+                    val applied = index < snapshot.rpmThresholds.size && snapshot.rpmThresholds[index] == rpm
                     applyAuthoritativeSnapshot(snapshot)
-                    _hasUnsavedChanges.value = true
+                    _hasUnsavedChanges.value = if (applied) true else prevHasUnsaved
                     _isNvsConfirmed.value = false
+                    if (!applied) {
+                        Log.w("PulseShiftRepo", "Fresh device snapshot shows threshold for LED ${index + 1} was not applied by ESP32.")
+                        _lightingError.tryEmit("Threshold write for LED ${index + 1} timed out and controller snapshot confirms change was not applied.")
+                    }
                     return@withLock
                 }
                 _lightingError.tryEmit("Threshold write for LED ${index + 1} was not acknowledged and snapshot query failed. Controller sync unknown.")

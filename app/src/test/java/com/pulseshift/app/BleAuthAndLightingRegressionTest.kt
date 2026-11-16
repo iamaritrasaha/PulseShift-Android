@@ -258,6 +258,103 @@ class BleAuthAndLightingRegressionTest {
     }
 
     @Test
+    fun testBleCommandTimeoutWithContradictingSnapshotReconcilesAuthoritativeStateAndReturnsFailure() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_SET_EFFECT -> {
+                        // Drop ACK to simulate timeout and trigger subsequent snapshot query
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        // Return snapshot showing ESP32 has STATIC effect, contradicting requested BREATHING
+                        val snapshot = ConfigSnapshot(
+                            isValid = true,
+                            snapshotId = seq,
+                            activeRevision = 3,
+                            isPowerOn = true,
+                            brightness = 200,
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = List(6) { RgbColor.BrandViolet },
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = null
+                        configSnapshotsFlow.value = snapshot
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+            val authOk = repository.authenticateChallengeResponse()
+            assertTrue("Precondition: Auth must succeed", authOk)
+            assertFalse("Precondition: hasUnsavedChanges initially false", repository.hasUnsavedChanges.value)
+
+            // Request BREATHING effect. ACK times out, snapshot returns STATIC (contradicting requested change).
+            val success = repository.setEffect(com.pulseshift.app.domain.model.EffectType.BREATHING)
+
+            // CRITICAL VERIFICATIONS:
+            // 1. Operation must return FALSE, NOT true!
+            assertFalse("setEffect must return FALSE when controller snapshot contradicts requested setting", success)
+
+            // 2. UI state must be reconciled to the controller's actual authoritative state (STATIC)
+            assertEquals("Effect must be reconciled to controller snapshot (STATIC)", com.pulseshift.app.domain.model.EffectType.STATIC, repository.lightingState.value.effect)
+            assertTrue("State must be hardware confirmed from authoritative snapshot", repository.lightingState.value.isHardwareConfirmed)
+            assertFalse("isSyncUnknown must be false since snapshot succeeded", repository.lightingState.value.isSyncUnknown)
+            assertFalse("isPendingSync must be cleared", repository.lightingState.value.isPendingSync)
+
+            // 3. hasUnsavedChanges must NOT be marked true because the unapplied mutation was rejected
+            assertFalse("hasUnsavedChanges must remain FALSE when change was not applied by controller", repository.hasUnsavedChanges.value)
+            assertFalse("isNvsConfirmed must be false", repository.isNvsConfirmed.value)
+        }
+    }
+
+    @Test
     fun testUnauthenticatedLightingWriteDoesNotMutateStateOrSetUnsaved() {
         runBlocking {
             whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(false)
