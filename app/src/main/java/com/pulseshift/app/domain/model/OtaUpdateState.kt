@@ -33,6 +33,9 @@ sealed interface OtaUpdateState {
         val secondsRemaining: Int
     ) : OtaUpdateState
 
+    data class Reconnecting(val targetSlot: Int) : OtaUpdateState
+    data class Confirming(val targetSlot: Int) : OtaUpdateState
+
     data class Success(
         val previousVersion: String,
         val newVersion: String,

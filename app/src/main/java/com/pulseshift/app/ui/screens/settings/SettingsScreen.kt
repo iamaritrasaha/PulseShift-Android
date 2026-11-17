@@ -414,7 +414,9 @@ fun SettingsScreen(
                                 OtaUpdateState.Cancelling -> "Cancelling Update..."
                                 OtaUpdateState.Cancelled -> "Update Cancelled"
                                 is OtaUpdateState.Verifying -> "Verifying Checksum..."
-                                is OtaUpdateState.Rebooting -> "ESP32 Rebooting..."
+                                is OtaUpdateState.Rebooting -> "ESP32 rebooting"
+                                is OtaUpdateState.Reconnecting -> "Reconnecting over Bluetooth"
+                                is OtaUpdateState.Confirming -> "Checking the running firmware"
                                 is OtaUpdateState.Success -> if (state.imageIdentityVerified) {
                                     "Firmware Image Verified"
                                 } else {
@@ -461,7 +463,15 @@ fun SettingsScreen(
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Rebooting -> {
-                                Text("Switching active boot partition and restarting device. Waiting for BLE telemetry reconnection (${state.secondsRemaining}s)...")
+                                Text("The ESP32 is switching to app${state.targetSlot}. Waiting ${state.secondsRemaining} s for reboot.")
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            is OtaUpdateState.Reconnecting -> {
+                                Text("Waiting for the controller to return on app${state.targetSlot}.")
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            is OtaUpdateState.Confirming -> {
+                                Text("Checking the digest and bootloader status for app${state.targetSlot}.")
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Success -> {

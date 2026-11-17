@@ -2404,7 +2404,8 @@ class BlePulseShiftRepository internal constructor(
                 _otaUpdateState.value = OtaUpdateState.Failed(
                     "Interrupted while waiting for the ESP32 to confirm OTA start."
                 )
-            } else if (state is OtaUpdateState.Verifying || state is OtaUpdateState.Rebooting) {
+            } else if (state is OtaUpdateState.Verifying || state is OtaUpdateState.Rebooting ||
+                state is OtaUpdateState.Reconnecting || state is OtaUpdateState.Confirming) {
                 _otaUpdateState.value = OtaUpdateState.Failed(
                     "Post-update verification was interrupted. The ESP32 may have switched slots.",
                     false
@@ -2551,6 +2552,7 @@ class BlePulseShiftRepository internal constructor(
         }
 
         // 5. Await reconnect with new firmware
+        _otaUpdateState.value = OtaUpdateState.Reconnecting(targetSlot)
         var reconnectedDev: BleDevice? = null
         val reconnected = withTimeoutOrNull(35000L) {
             while (true) {
@@ -2626,6 +2628,7 @@ class BlePulseShiftRepository internal constructor(
         }
 
         // 8-10. Verify bootloader OTA state, confirm, and verify transition to VALID
+        _otaUpdateState.value = OtaUpdateState.Confirming(targetSlot)
         return performOtaConfirmationWorkflow(
             previousVersion = previousVersion,
             newVer = newVer,
