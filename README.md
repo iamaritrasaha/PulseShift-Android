@@ -183,7 +183,7 @@ To guarantee that the Android application can be updated freely without breaking
   - `maxEffectId` (Byte 16): Advertises maximum effect index.
   - `otaActiveSlot` (Byte 17): Indicates currently running boot slot (`0` = app0, `1` = app1).
   - `protocolMinor` (Byte 18): Advertises minor protocol revision (`3` for v2.3.0).
-  - `otaFlags` (Byte 19): Bitmask denoting stationary interlock and rollback support.
+  - `otaFlags` (Byte 19): Bit 0 indicates a rollback candidate, bit 1 indicates a dual-slot layout, and bit 2 indicates running app digest support.
 - **Dynamic UI Adaptation:**
   The Lighting Studio dynamically filters animation cards by `capabilities.supportedStartupAnimations`. Older firmware will only display animations 0..3, while v2.3.0+ displays all 6 animations.
 - **Non-Fatal Snapshot Parsing:**
@@ -202,21 +202,23 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 2. **Stationary Safety Interlock:**
    OTA update is strictly blocked if the motorcycle engine is running (`RPM > 0`) or if active CAN bus traffic has been received within the last 3000 ms. Updates must only be performed with the motorcycle parked on a stable power supply.
 3. **Cryptographic ECDSA P-256 & SHA-256 Authentication:**
-   Images must be signed using the project private key with `tools/sign_firmware.py`, producing a 76-byte `PSOT` authentication trailer. The Android companion app validates the `PSOT` trailer upfront. During transfer, the ESP32 incrementally hashes incoming chunked packets with hardware SHA acceleration and verifies the full 64-byte ECDSA signature against the hardcoded public key before marking the partition bootable.
+   Images must be signed using the project private key with `tools/sign_firmware.py`, producing a 76-byte `PSOT` authentication trailer. Android checks the trailer format and payload CRC. The ESP32 incrementally hashes the payload and verifies the ECDSA signature against its embedded public key before selecting the boot partition.
 4. **Negotiated MTU & Efficient BLE Transfer:**
-   Upon connection, the app requests MTU 512, dynamically adjusting chunk payloads up to 215-230 bytes. This reduces the transfer burden from ~68,000 legacy packets down to ~3,200 chunks, cutting transfer time from 15+ minutes down to 35-45 seconds without packet sequence wraparound hazards.
+   The app sizes each chunk using the negotiated MTU, up to 230 bytes. Each chunk advances progress after the ESP32 acknowledges its index and written byte count.
 5. **Bootloader Self-Test & Rollback:**
-   Upon restart, the ESP32 bootloader boots into the new slot in `ESP_OTA_IMG_PENDING_VERIFY` state. The firmware runs an autonomous self-test (validating LittleFS storage, NVS configuration, CAN listen-only mode, and BLE advertising). If verification fails or the hardware watchdog trips, the ESP32 automatically rolls back to the previous working slot.
+   With a compatible installed bootloader and a rollback candidate, the new slot boots in `ESP_OTA_IMG_PENDING_VERIFY`. The firmware checks LittleFS, active configuration, TWAI health, and BLE readiness. Confirmation must occur within its 120-second window. Verify the installed bootloader and rollback on the bench before field use.
 6. **Post-Reboot Verification & No False Success:**
    The Android app reconnects after reboot and performs strict validation:
-   - Verifies the running partition slot matches the target slot (immediately detects rollback).
-   - Verifies the running slot and checks that a firmware version is reported. Exact image identity verification still requires a dedicated signed build manifest.
+   - Checks that the running slot matches the target slot and that the firmware reports a version.
+   - Compares the running ESP32 app digest with the selected image when the firmware supports the digest query. For ESP32 images without an appended validation hash, it compares the SHA-256 of the entire app payload. For older firmware it reports confirmation of the boot slot and leaves image identity unverified.
    - Reauthenticates the owner on the **new** BLE connection. Authentication does not persist across a reboot.
    - Queries `BLE_CFG_OP_OTA_STATUS (0x65)` for actual bootloader image state and the presence of a rollback candidate. A missing or unsafe state is a hard failure.
    - Issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` only after reauthentication and state verification. If an ACK is lost, it retries once using the idempotent confirmation command.
    - The app reports the confirmation error status rather than claiming success when the handshake is missing or rejected.
 
-   **Rollback prerequisite:** The official Arduino-ESP32 core 2.0.x automatically validates a pending image unless the sketch overrides the weak `verifyRollbackLater()` hook. The matching PulseShift firmware now defers validation until owner confirmation. Validate this on physical hardware using `OTA STATUS` over USB before deployment.
+   **Cancellation:** Cancel stops sending chunks and requests OTA_ABORT while the transfer is active. The dialog reports cancellation as confirmed only after an ESP32 acknowledgment. Once the app starts OTA_END, it proceeds with verification.
+
+   **Rollback prerequisite:** The Arduino-ESP32 3.3.12 sketch overrides the core's `verifyRollbackLater()` hook to defer validation until owner confirmation. The installed bootloader controls the transition to pending verification and must support rollback.
 
 ### OTA Update Procedure
 

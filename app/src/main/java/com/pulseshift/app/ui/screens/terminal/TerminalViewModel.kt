@@ -3,11 +3,11 @@ package com.pulseshift.app.ui.screens.terminal
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulseshift.app.data.ble.BleConnectionState
+import com.pulseshift.app.data.ble.CapturePageRead
 import com.pulseshift.app.data.ble.PulseShiftBleManager
 import com.pulseshift.app.data.repository.PulseShiftRepository
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.CaptureExportState
-import com.pulseshift.app.domain.model.CaptureRecord
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalPageEnd
@@ -19,15 +19,14 @@ import com.pulseshift.app.ui.screens.terminal.TerminalLineType.ERROR
 import com.pulseshift.app.ui.screens.terminal.TerminalLineType.INFO
 import com.pulseshift.app.ui.screens.terminal.TerminalLineType.WARN
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
@@ -38,12 +37,6 @@ data class TerminalLine(
     val timestampMs: Long,
     val type: TerminalLineType,
     val text: String
-)
-
-data class CollectPageResult(
-    val records: List<CaptureRecord>,
-    val pageEnd: HistoricalPageEnd?,
-    val firmwareError: String?
 )
 
 /**
@@ -60,11 +53,6 @@ class TerminalViewModel(
         private const val MAX_TRANSCRIPT = 500
         private const val PAGE_COLLECT_TIMEOUT_MS = 4000L
 
-        /** Grace window for the trailing end-of-page marker after a full page of records. */
-        private const val PAGE_END_GRACE_MS = 400L
-
-        /** DUMP ALL aborts when no new page data or state change occurs in this window. */
-        private const val DUMP_ALL_STALL_TIMEOUT_MS = 6000L
         private const val RPM_MONITOR_INTERVAL_MS = 150L
     }
 
@@ -254,8 +242,8 @@ class TerminalViewModel(
             TerminalCommand.ConfigStatus -> printConfigStatus()
             TerminalCommand.ConfigSave -> runCommand {
                 val ok = repository.saveConfigurationToController()
-                if (ok) ACK to "[ACK] Configuration PERSISTED to NVS (readback-verified)."
-                else ERROR to "[ERR] CONFIG SAVE failed (timeout, rejection or readback mismatch)."
+                if (ok) ACK to "[ACK] ESP32 confirmed configuration saved to NVS."
+                else ERROR to "[ERR] ESP32 persistence acknowledgement missing or rejected."
             }
             is TerminalCommand.RpmMultiplier -> runRpmMultiplier(command.multiplier)
             is TerminalCommand.Effect -> runEffect(command.effectId)
@@ -511,7 +499,7 @@ class TerminalViewModel(
     /**
      * Single 12-record page from the current phone cursor (or an explicit
      * page number). DUMP NEXT resumes from the cursor; DUMP PAGE n jumps.
-     * Preserves partial pages and uses end-of-page events instead of discarding records.
+     * Advances only after receiving every record accounted for by the page end.
      */
     private fun runDumpPage(startRecord: Long, pageNumber: Int) {
         if (!connected()) return
@@ -528,33 +516,18 @@ class TerminalViewModel(
                 _isBusy.value = true
                 append(TerminalLineType.INFO, "[DUMP] Requested page $pageNumber from record $startRecord…")
 
-                // collectPage subscribes first and only then sends the request,
-                // so no early record or end-of-page marker can be missed.
-                val collectDeferred = async {
-                    collectPage(12) { bleManager.requestHistoricalCapturePage(startRecord) }
-                }
-
-                val (records, pageEnd, firmwareError) = collectDeferred.await()
-
-                if (firmwareError != null) {
-                    append(TerminalLineType.ERROR, "[DUMP] Request failed: firmware rejected ($firmwareError).")
-                } else if (records.isNotEmpty()) {
-                    records.forEach { append(TerminalLineType.CAPTURE, TerminalCommandRegistry.formatCaptureRecord(it)) }
-                    append(TerminalLineType.INFO, "[DUMP] Received ${records.size} records.")
-                    dumpCursor = pageEnd?.nextOffset ?: (startRecord + records.size)
-                    if (pageEnd != null) {
-                        append(TerminalLineType.ACK, "[DUMP] Completed page $pageNumber: ${records.size} records; phone cursor now $dumpCursor${if (pageEnd.isFinished) " (end of capture)" else ""}.")
-                    } else {
-                        append(TerminalLineType.WARN, "[DUMP] Completed with partial page (timed out waiting for end-of-page): ${records.size} records; phone cursor now $dumpCursor.")
+                when (val page = bleManager.readCapturePage(startRecord)) {
+                    is CapturePageRead.Complete -> {
+                        dumpCursor = page.cursor.nextOffset
+                        page.records.forEach { append(TerminalLineType.CAPTURE, TerminalCommandRegistry.formatCaptureRecord(it)) }
+                        append(TerminalLineType.ACK, "[DUMP] Completed page $pageNumber: ${page.records.size} records; phone cursor now $dumpCursor${if (page.cursor.isFinished) " (end of capture)" else ""}.")
                     }
-                } else {
-                    if (pageEnd != null) {
-                        dumpCursor = pageEnd.nextOffset
-                        append(TerminalLineType.INFO, "[DUMP] End of capture (0 records at record $startRecord).")
-                    } else {
-                        append(TerminalLineType.ERROR, "[DUMP] Request failed: timeout waiting for device response at record $startRecord.")
+                    is CapturePageRead.Failed -> {
+                        append(TerminalLineType.ERROR, "[DUMP] Request failed: ${page.reason} Phone cursor stays at $dumpCursor.")
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 append(TerminalLineType.ERROR, "[DUMP] Request failed: ${e.message ?: "error"}")
             } finally {
@@ -581,8 +554,6 @@ class TerminalViewModel(
             try {
                 _isBusy.value = true
                 var printed = 0
-                var lastProgressSignature = -1
-                var lastProgressAt = System.currentTimeMillis()
                 while (true) {
                     val state = repository.captureExportState.value
                     if (state is CaptureExportState.Idle) {
@@ -590,7 +561,11 @@ class TerminalViewModel(
                         return@launch
                     }
                     if (state is CaptureExportState.Failed) {
-                        append(TerminalLineType.ERROR, "[DUMP ALL] Export failed: ${state.reason}")
+                        while (printed < state.records.size) {
+                            append(TerminalLineType.CAPTURE, TerminalCommandRegistry.formatCaptureRecord(state.records[printed++]))
+                        }
+                        dumpCursor = state.nextRecordIndex
+                        append(TerminalLineType.ERROR, "[DUMP ALL] Export stopped: ${state.reason} DUMP NEXT resumes at $dumpCursor.")
                         return@launch
                     }
                     if (state is CaptureExportState.Exporting) {
@@ -599,24 +574,12 @@ class TerminalViewModel(
                             append(TerminalLineType.CAPTURE, TerminalCommandRegistry.formatCaptureRecord(records[printed]))
                             printed++
                         }
+                        dumpCursor = state.nextRecordIndex
                         if (state.isFinished) {
                             dumpCursor = state.nextRecordIndex
                             append(TerminalLineType.ACK, "[DUMP ALL] Export completed: $printed records received.")
                             return@launch
                         }
-                    }
-                    // Explicit stall timeout: abort when no new record, page-end
-                    // or failure arrives within the window — never spin forever.
-                    val signature = printed * 2 + if (state is CaptureExportState.Exporting && state.isFinished) 1 else 0
-                    if (signature != lastProgressSignature) {
-                        lastProgressSignature = signature
-                        lastProgressAt = System.currentTimeMillis()
-                    } else if (System.currentTimeMillis() - lastProgressAt > DUMP_ALL_STALL_TIMEOUT_MS) {
-                        repository.cancelCaptureExport()
-                        append(TerminalLineType.ERROR,
-                            "[DUMP ALL] Export stalled: no page data for ${DUMP_ALL_STALL_TIMEOUT_MS / 1000}s. " +
-                                "Phone cursor kept at $dumpCursor; DUMP NEXT resumes.")
-                        return@launch
                     }
                     delay(120)
                 }
@@ -634,71 +597,6 @@ class TerminalViewModel(
         append(TerminalLineType.ACK, "[DUMP] Cancelled; phone cursor kept at $dumpCursor for resume.")
     }
 
-    /**
-     * Collect up to [max] capture records straight from the reassembler flow
-     * (independent of the repository's auto-paging export state). [sendRequest]
-     * is invoked only AFTER the record/page-end/error collectors are subscribed,
-     * so no early record or end-of-page marker can be missed.
-     *
-     * Terminates on end-of-page or firmware error; when a full page of records
-     * arrives first, the trailing end-of-page marker gets a short grace window.
-     * Partial pages are preserved on timeout; duplicate record notifications
-     * beyond [max] are dropped. A replayed diagnostic error from before this
-     * request is never treated as this request's failure.
-     */
-    private suspend fun collectPage(max: Int, sendRequest: () -> Unit): CollectPageResult {
-        val records = mutableListOf<CaptureRecord>()
-        var pageEnd: HistoricalPageEnd? = null
-        var firmwareError: String? = null
-        val done = CompletableDeferred<Unit>()
-        val maxRecordsReached = CompletableDeferred<Unit>()
-        // completedMessages replays its last message on subscribe; the replay
-        // is consumed during subscription below. Only errors assembled after
-        // this point may represent a firmware rejection of THIS request.
-        val startedAtMs = System.currentTimeMillis()
-
-        val job = viewModelScope.launch {
-            launch {
-                bleManager.logReassembler.captureRecordEvents.collect { rec ->
-                    if (records.size < max) {
-                        records.add(rec)
-                        if (records.size >= max) maxRecordsReached.complete(Unit)
-                    }
-                }
-            }
-            launch {
-                pageEnd = bleManager.logReassembler.capturePageEndEvents.first()
-                done.complete(Unit)
-            }
-            launch {
-                bleManager.diagnosticLogMessages.collect { msg ->
-                    if (msg.severity == LogSeverity.ERROR && msg.timestampMs > startedAtMs) {
-                        firmwareError = msg.messageText
-                        done.complete(Unit)
-                    }
-                }
-            }
-        }
-
-        try {
-            sendRequest()
-            val completed = withTimeoutOrNull(PAGE_COLLECT_TIMEOUT_MS) {
-                select<Boolean> {
-                    done.onAwait { true }
-                    maxRecordsReached.onAwait { false }
-                }
-            }
-            if (completed == false) {
-                // Full page arrived before the end-of-page marker: wait briefly
-                // for it so a complete page is not misreported as partial.
-                withTimeoutOrNull(PAGE_END_GRACE_MS) { done.await() }
-            }
-        } finally {
-            job.cancel()
-        }
-
-        return CollectPageResult(records, pageEnd, firmwareError)
-    }
 
     private fun runCommand(block: suspend () -> Pair<TerminalLineType, String>) {
         if (!connected()) return

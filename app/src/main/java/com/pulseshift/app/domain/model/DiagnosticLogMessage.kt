@@ -101,5 +101,9 @@ sealed class CaptureExportState {
         val records: List<CaptureRecord> = emptyList(),
         val isFinished: Boolean = false
     ) : CaptureExportState()
-    data class Failed(val reason: String) : CaptureExportState()
+    data class Failed(
+        val reason: String,
+        val nextRecordIndex: Long = 0,
+        val records: List<CaptureRecord> = emptyList()
+    ) : CaptureExportState()
 }

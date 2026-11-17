@@ -429,22 +429,32 @@ fun DeviceCaptureTab(
                         Text("Cancel")
                     }
                 }
-                if (exporting) {
-                    val state = captureExportState as com.pulseshift.app.domain.model.CaptureExportState.Exporting
-                    Text(
-                        "Record ${state.nextRecordIndex} | ${state.records.size} received${if (state.isFinished) " | finished" else ""}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    val preview = state.records.takeLast(5).reversed()
-                    for (r in preview) {
+                val records = when (captureExportState) {
+                    is com.pulseshift.app.domain.model.CaptureExportState.Exporting -> {
                         Text(
-                            "t=${r.timestampMs} id=0x${java.lang.Long.toHexString(r.canId).uppercase()} dlc=${r.dlc} ${r.dataHex}",
+                            "Record ${captureExportState.nextRecordIndex} | ${captureExportState.records.size} received${if (captureExportState.isFinished) " | finished" else ""}",
                             style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            fontFamily = FontFamily.Monospace
                         )
+                        captureExportState.records
                     }
+                    is com.pulseshift.app.domain.model.CaptureExportState.Failed -> {
+                        Text(
+                            "${captureExportState.reason} ${captureExportState.records.size} records received. Next record ${captureExportState.nextRecordIndex}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        captureExportState.records
+                    }
+                    com.pulseshift.app.domain.model.CaptureExportState.Idle -> emptyList()
+                }
+                for (r in records.takeLast(5).reversed()) {
+                    Text(
+                        "t=${r.timestampMs} id=0x${java.lang.Long.toHexString(r.canId).uppercase()} dlc=${r.dlc} ${r.dataHex}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -508,6 +518,7 @@ fun DeviceCaptureTab(
                             com.pulseshift.app.domain.model.DeviceCommandPhase.ACCEPTED -> MaterialTheme.colorScheme.primary to "Accepted"
                             com.pulseshift.app.domain.model.DeviceCommandPhase.APPLIED -> MaterialTheme.colorScheme.primary to "Applied"
                             com.pulseshift.app.domain.model.DeviceCommandPhase.SAVED -> MaterialTheme.colorScheme.primary to "Saved"
+                            com.pulseshift.app.domain.model.DeviceCommandPhase.UNVERIFIED -> MaterialTheme.colorScheme.tertiary to "Unverified"
                             com.pulseshift.app.domain.model.DeviceCommandPhase.FAILED -> MaterialTheme.colorScheme.error to "Failed"
                         }
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

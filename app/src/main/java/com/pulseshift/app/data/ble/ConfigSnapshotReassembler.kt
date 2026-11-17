@@ -9,13 +9,15 @@ import com.pulseshift.app.domain.model.StartupAnimation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.CRC32
 
 class ConfigSnapshotReassembler {
-    private val activeSnapshots = ConcurrentHashMap<Int, MutableMap<Int, ByteArray>>()
-    private val snapshotTotalChunks = ConcurrentHashMap<Int, Int>()
-    private val snapshotFirstReceived = ConcurrentHashMap<Int, Long>()
+    private class Assembly(totalChunks: Int, val receivedAtMs: Long) {
+        val chunks = arrayOfNulls<ByteArray>(totalChunks)
+        var bytes = 0
+    }
+
+    private val activeSnapshots = mutableMapOf<Int, Assembly>()
 
     // Diagnostics blobs (GET_DIAGNOSTICS, schema byte 1) arrive with the same
     // chunk framing; they are reassembled here and routed to their own flow.
@@ -38,6 +40,7 @@ class ConfigSnapshotReassembler {
         }
     }
 
+    @Synchronized
     fun processChunkBytes(bytes: ByteArray): ConfigSnapshot? {
         try {
             if (bytes.size < 6) return null
@@ -49,44 +52,36 @@ class ConfigSnapshotReassembler {
             val totalChunks = bytes[4].toInt() and 0xFF
             val payloadLength = bytes[5].toInt() and 0xFF
 
-            if (bytes.size < 6 + payloadLength || payloadLength > 14) return null
-            if (chunkIndex >= totalChunks) return null
+            if (bytes.size < 6 + payloadLength || payloadLength !in 1..14) return null
+            if (totalChunks !in 1..64 || chunkIndex >= totalChunks) return null
 
             val chunkPayload = bytes.copyOfRange(6, 6 + payloadLength)
 
-            if (chunkIndex == 0) {
+            val nowMs = System.nanoTime() / 1_000_000L
+            activeSnapshots.entries.removeAll { nowMs - it.value.receivedAtMs > 5_000L }
+            if (activeSnapshots.size >= 8 && !activeSnapshots.containsKey(snapshotId)) return null
+            val assembly = activeSnapshots.getOrPut(snapshotId) { Assembly(totalChunks, nowMs) }
+            val chunk = assembly.chunks.getOrNull(chunkIndex)
+            if (assembly.chunks.size != totalChunks || (chunk != null && !chunk.contentEquals(chunkPayload))) {
                 activeSnapshots.remove(snapshotId)
-                snapshotTotalChunks.remove(snapshotId)
-                snapshotFirstReceived.remove(snapshotId)
-            }
-
-            val chunksMap = activeSnapshots.computeIfAbsent(snapshotId) {
-                snapshotTotalChunks[snapshotId] = totalChunks
-                snapshotFirstReceived[snapshotId] = System.currentTimeMillis()
-                ConcurrentHashMap()
-            }
-
-            if (chunksMap.containsKey(chunkIndex)) {
-                logW("ConfigSnapshot", "Duplicate chunk $chunkIndex received for snapshot $snapshotId")
                 return null
             }
-            chunksMap[chunkIndex] = chunkPayload
-
-            cleanStaleSnapshots()
-
-            if (chunksMap.size == totalChunks) {
-                val fullDataList = ArrayList<Byte>()
-                for (i in 0 until totalChunks) {
-                    val part = chunksMap[i] ?: return null
-                    for (b in part) {
-                        fullDataList.add(b)
-                    }
-                }
+            if (chunk != null) return null
+            assembly.chunks[chunkIndex] = chunkPayload
+            assembly.bytes += payloadLength
+            if (assembly.bytes > 512) {
                 activeSnapshots.remove(snapshotId)
-                snapshotTotalChunks.remove(snapshotId)
-                snapshotFirstReceived.remove(snapshotId)
+                return null
+            }
 
-                val fullBuffer = fullDataList.toByteArray()
+            if (assembly.chunks.all { it != null }) {
+                activeSnapshots.remove(snapshotId)
+                val fullBuffer = ByteArray(assembly.bytes)
+                var offset = 0
+                for (part in assembly.chunks.filterNotNull()) {
+                    part.copyInto(fullBuffer, offset)
+                    offset += part.size
+                }
                 if ((fullBuffer.isNotEmpty()) && (fullBuffer[0].toInt() and 0xFF) == 1) {
                     // Diagnostics TLV blob (GET_DIAGNOSTICS), not a config snapshot.
                     val report = DiagnosticsReport.parse(snapshotId, fullBuffer)
@@ -317,6 +312,7 @@ class ConfigSnapshotReassembler {
             }
             offset += 2 + len
         }
+        if (offset != dataLen) return null
 
         // Require mandatory fields to be present
         val mandatorySettingIds = setOf(0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B)
@@ -357,19 +353,8 @@ class ConfigSnapshotReassembler {
         )
     }
 
-    private fun cleanStaleSnapshots() {
-        val now = System.currentTimeMillis()
-        val stale = snapshotFirstReceived.filter { (now - it.value) > 5000 }.keys
-        for (id in stale) {
-            activeSnapshots.remove(id)
-            snapshotTotalChunks.remove(id)
-            snapshotFirstReceived.remove(id)
-        }
-    }
-
+    @Synchronized
     fun clear() {
         activeSnapshots.clear()
-        snapshotTotalChunks.clear()
-        snapshotFirstReceived.clear()
     }
 }

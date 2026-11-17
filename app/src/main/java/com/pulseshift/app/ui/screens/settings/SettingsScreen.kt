@@ -47,6 +47,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,14 +58,21 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.domain.model.OtaUpdateState
+import com.pulseshift.app.domain.model.OTA_MAX_PACKAGE_BYTES
 import com.pulseshift.app.ui.theme.PulseShiftRadius
 import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,23 +88,40 @@ fun SettingsScreen(
     val otaState by viewModel.otaUpdateState.collectAsState()
 
     var showAboutDialog by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        if (uri != null) {
+        if (uri != null) scope.launch {
             try {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes != null && bytes.isNotEmpty()) {
-                    viewModel.startOtaUpdate(bytes)
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            if (output.size() + count > OTA_MAX_PACKAGE_BYTES) {
+                                throw IOException("Firmware file exceeds the 1.25 MiB OTA limit.")
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    } ?: throw IOException("Unable to open the selected firmware file.")
                 }
-            } catch (e: Exception) {
-                // Read error handled by view model
+                viewModel.startOtaUpdate(bytes)
+            } catch (e: IOException) {
+                snackbar.showSnackbar(e.message ?: "Unable to read the selected firmware file.")
+            } catch (e: SecurityException) {
+                snackbar.showSnackbar("The app cannot read the selected firmware file.")
             }
         }
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
@@ -352,7 +378,8 @@ fun SettingsScreen(
         if (otaState !is OtaUpdateState.Idle) {
             AlertDialog(
                 onDismissRequest = {
-                    if (otaState is OtaUpdateState.Success || otaState is OtaUpdateState.Failed) {
+                    if (otaState is OtaUpdateState.Success || otaState is OtaUpdateState.Failed ||
+                        otaState is OtaUpdateState.Cancelled) {
                         viewModel.cancelOtaUpdate()
                     }
                 },
@@ -363,12 +390,18 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Text(
-                            when (otaState) {
+                            when (val state = otaState) {
                                 is OtaUpdateState.Validating -> "Validating Firmware..."
                                 is OtaUpdateState.Transferring -> "Streaming Firmware..."
+                                OtaUpdateState.Cancelling -> "Cancelling Update..."
+                                OtaUpdateState.Cancelled -> "Update Cancelled"
                                 is OtaUpdateState.Verifying -> "Verifying Checksum..."
                                 is OtaUpdateState.Rebooting -> "ESP32 Rebooting..."
-                                is OtaUpdateState.Success -> "Update Completed"
+                                is OtaUpdateState.Success -> if (state.imageIdentityVerified) {
+                                    "Firmware Image Verified"
+                                } else {
+                                    "Boot Slot Confirmed"
+                                }
                                 is OtaUpdateState.Failed -> "Update Interrupted"
                                 else -> "Firmware Update"
                             }
@@ -383,7 +416,9 @@ fun SettingsScreen(
                         when (val state = otaState) {
                             is OtaUpdateState.Validating -> {
                                 Text("Checking image size (${state.totalBytes} bytes) and SHA-256 integrity.")
-                                Text("Target Partition: Slot ${state.targetSlot} (app${state.targetSlot})", style = MaterialTheme.typography.bodySmall)
+                                if (state.targetSlot >= 0) {
+                                    Text("Expected target: Slot ${state.targetSlot}", style = MaterialTheme.typography.bodySmall)
+                                }
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Transferring -> {
@@ -398,8 +433,13 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
+                            OtaUpdateState.Cancelling -> {
+                                Text("Waiting for the ESP32 to acknowledge cancellation.")
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            OtaUpdateState.Cancelled -> Text("The ESP32 acknowledged cancellation.")
                             is OtaUpdateState.Verifying -> {
-                                Text("FIPS 180-2 SHA-256 hardware hash calculation on ESP32 target partition...")
+                                Text("Waiting for the ESP32 to check the image and signature.")
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Rebooting -> {
@@ -407,12 +447,15 @@ fun SettingsScreen(
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Success -> {
-                                Text("Firmware upgraded successfully from ${state.previousVersion} to ${state.newVersion} on Slot ${state.activeSlot}.")
-                                Text("ESP32 self-test passed and bootloader rollback cancelled.", color = MaterialTheme.colorScheme.primary)
+                                Text("The ESP32 reports ${state.newVersion} on slot ${state.activeSlot} and marked it valid.")
+                                Text(
+                                    if (state.imageIdentityVerified) "The running image digest matches the selected file."
+                                    else "Image identity is unverified. This firmware reports its slot and version only.",
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                             is OtaUpdateState.Failed -> {
                                 Text("Failure: ${state.reason}", color = MaterialTheme.colorScheme.error)
-                                Text("Safety Guarantee: Existing running slot was untouched. Device will boot normally.", style = MaterialTheme.typography.bodySmall)
                             }
                             else -> {}
                         }
@@ -420,7 +463,7 @@ fun SettingsScreen(
                 },
                 confirmButton = {
                     when (otaState) {
-                        is OtaUpdateState.Success, is OtaUpdateState.Failed -> {
+                        is OtaUpdateState.Success, is OtaUpdateState.Failed, OtaUpdateState.Cancelled -> {
                             TextButton(onClick = { viewModel.cancelOtaUpdate() }) {
                                 Text("Done")
                             }

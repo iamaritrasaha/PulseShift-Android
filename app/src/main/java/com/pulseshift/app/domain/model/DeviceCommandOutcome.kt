@@ -6,7 +6,7 @@ package com.pulseshift.app.domain.model
  * Failed with the firmware status reason. A successful Bluetooth write alone
  * is never treated as proof of execution.
  */
-enum class DeviceCommandPhase { SENDING, ACCEPTED, APPLIED, SAVED, FAILED }
+enum class DeviceCommandPhase { SENDING, ACCEPTED, APPLIED, SAVED, UNVERIFIED, FAILED }
 
 data class DeviceCommandOutcome(
     val id: Long,

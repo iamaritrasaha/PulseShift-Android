@@ -117,7 +117,7 @@ class PulseShiftBleManager(
 
         /** Fixed high sequence for manager-initiated snapshot fetches; the
          *  repository allocates 1..N sequentially, so no collision occurs. */
-        private const val SNAPSHOT_REQUEST_SEQ = 0xFF00
+        internal const val SNAPSHOT_REQUEST_SEQ = 0xFF00
 
         fun gattStatusToString(status: Int): String {
             return when (status) {
@@ -171,8 +171,9 @@ class PulseShiftBleManager(
     private val _canHealthState = MutableStateFlow<CanHealthState?>(null)
     val canHealthState: StateFlow<CanHealthState?> = _canHealthState.asStateFlow()
 
-    // Log Chunk Reassembler & Flows
-    val logReassembler = DiagnosticLogReassembler()
+    @Volatile
+    private var isHistoricalRetrievalActive = false
+    val logReassembler = DiagnosticLogReassembler { isHistoricalRetrievalActive = false }
     val diagnosticLogMessages: SharedFlow<DiagnosticLogMessage> = logReassembler.completedMessages
     val pageEndEvents: SharedFlow<HistoricalPageEnd> = logReassembler.pageEndEvents
 
@@ -208,11 +209,13 @@ class PulseShiftBleManager(
     private var isGattOpPending = false
     private var opTimeoutJob: Job? = null
 
-    // Historical Log State Machine
-    private var isHistoricalRetrievalActive = false
-
     // CAN capture page retrieval state
-    var isCaptureRetrievalActive = false
+    private val capturePageReader = CapturePageReader(
+        logReassembler, ::requestHistoricalCapturePage, ::cancelCaptureRetrieval
+    )
+
+    internal suspend fun readCapturePage(startRecord: Long): CapturePageRead =
+        capturePageReader.read(startRecord)
 
     // Auto-reconnect support (user preference, applied on unexpected drops)
     private var autoReconnectEnabled = false
@@ -610,7 +613,6 @@ class PulseShiftBleManager(
             opTimeoutJob = null
         }
         isHistoricalRetrievalActive = false
-        isCaptureRetrievalActive = false
         isV2CapabilitiesValidated = false
         _connectedDevice.value = null
         _rpmTelemetryState.value = null
@@ -797,9 +799,8 @@ class PulseShiftBleManager(
      * (BLE_CTRL_CMD_GET_CAPTURE_PAGE). Records stream over the log
      * characteristic with the CAPTURE_LINE flag.
      */
-    fun requestHistoricalCapturePage(startRecord: Long) {
+    private fun requestHistoricalCapturePage(startRecord: Long) {
         val char = controlCharacteristic ?: return
-        isCaptureRetrievalActive = true
         val frame = PulseShiftBleProtocol.buildFetchCapturePage(startRecord)
         enqueueGattOp(GattOp.WriteChar(char, frame))
     }
@@ -807,9 +808,8 @@ class PulseShiftBleManager(
     /**
      * Send Control Request to cancel an ongoing CAN capture page transfer.
      */
-    fun cancelCaptureRetrieval() {
+    private fun cancelCaptureRetrieval() {
         val char = controlCharacteristic
-        isCaptureRetrievalActive = false
         if (char != null) {
             val frame = PulseShiftBleProtocol.buildCancelCaptureRetrieval()
             enqueueGattOp(GattOp.WriteChar(char, frame))

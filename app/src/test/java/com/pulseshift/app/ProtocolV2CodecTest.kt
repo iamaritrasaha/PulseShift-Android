@@ -321,9 +321,13 @@ class ProtocolV2CodecTest {
         }
 
         var snapshot: ConfigSnapshot? = null
-        for (i in 0 until totalChunks) {
-            snapshot = reassembler.processChunkBytes(makePkt(i, totalChunks, chunks[i]))
+        // Reordering and a duplicate must not reset or prematurely complete
+        // an otherwise valid snapshot. Finish by delivering chunk zero.
+        for (i in (1 until totalChunks).reversed()) {
+            assertNull(reassembler.processChunkBytes(makePkt(i, totalChunks, chunks[i])))
+            assertNull(reassembler.processChunkBytes(makePkt(i, totalChunks, chunks[i])))
         }
+        snapshot = reassembler.processChunkBytes(makePkt(0, totalChunks, chunks[0]))
 
         assertNotNull(snapshot)
         assertTrue(snapshot!!.isValid)
