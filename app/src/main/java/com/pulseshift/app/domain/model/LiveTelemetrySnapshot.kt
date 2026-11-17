@@ -2,12 +2,10 @@ package com.pulseshift.app.domain.model
 
 /**
  * Read-only interpretation of EXISTING ESP32 BLE notifications (RPM at 10 Hz,
- * health at 1 Hz). No new BLE opcodes, CAN identifiers or firmware changes.
- *
- * The saved CAN capture includes candidate bytes for voltage/temperature, but
- * does not identify or calibrate them. The current BLE protocol does not
- * transmit those bytes as live sensor measurements. Never invent engineering
- * units from a raw candidate value.
+ * health at 1 Hz). The optional paired firmware probe writes CAN 0x303[1]
+ * into RPM bytes 18-19 with an explicit freshness marker. Legacy firmware
+ * continues to work; this experimental prediction is NOT a verified voltmeter.
+ * Temperature remains unavailable; no temperature value is invented.
  */
 data class LiveTelemetrySnapshot(
     val receivedFrames: Long?,
@@ -29,6 +27,8 @@ data class LiveTelemetrySnapshot(
     val hasFreshHealthPacket: Boolean,
     // A null sensor reading means *not available*, never 0 V / 0 degrees.
     val batteryVolts: Double? = null,
+    val voltageCandidateRaw: Int? = null,
+    val voltageProbeSupported: Boolean = false,
     val temperatureCelsius: Double? = null
 ) {
     val hasLiveData: Boolean get() = hasFreshRpmPacket || hasFreshHealthPacket
@@ -69,7 +69,10 @@ data class LiveTelemetrySnapshot(
                 storageFull = can?.healthFlags?.isStorageFull,
                 receiveDegraded = can?.healthFlags?.isReceivePerformanceDegraded,
                 hasFreshRpmPacket = rpm != null,
-                hasFreshHealthPacket = can != null
+                hasFreshHealthPacket = can != null,
+                batteryVolts = rpm?.experimentalVoltageVolts,
+                voltageCandidateRaw = rpm?.experimentalVoltageRaw,
+                voltageProbeSupported = rpm?.experimentalVoltageProbeSupported == true
             )
         }
     }
