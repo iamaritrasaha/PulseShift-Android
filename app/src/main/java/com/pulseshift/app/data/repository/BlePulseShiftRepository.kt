@@ -1393,14 +1393,15 @@ class BlePulseShiftRepository(
 
                 transactionCommitted = true
 
-                // 4. Validate Snapshot Readback against ALL fields modified by preset with retry
+                // 4. Validate Snapshot Readback against ALL fields modified by preset with retry.
+                // Retry not only missing/invalid snapshots, but also stale revision readbacks.
                 var snapshot: ConfigSnapshot? = null
                 var attempt = 0
                 val maxAttempts = 3
                 while (attempt < maxAttempts) {
                     val seqSnap = nextSeq()
                     snapshot = requestAndWaitSnapshot(seqSnap, timeoutMs = 3000L)
-                    if (snapshot != null && snapshot.isValid) {
+                    if (snapshot != null && snapshot.isValid && snapshot.activeRevision >= ackCommit.activeRevision) {
                         break
                     }
                     attempt++
@@ -1429,7 +1430,8 @@ class BlePulseShiftRepository(
                     startupDurationMatches && thresholdsMatch) {
                     _lightingState.value = _lightingState.value.copy(
                         isPendingSync = false,
-                        isHardwareConfirmed = true
+                        isHardwareConfirmed = true,
+                        isSyncUnknown = false
                     )
                     _hasUnsavedChanges.value = true
                     _isNvsConfirmed.value = false
@@ -1450,10 +1452,25 @@ class BlePulseShiftRepository(
                             if (!thresholdsMatch) append("Thresholds/warning mismatch; ")
                         }
                     }
-                    Log.e("PulseShiftRepo", "Snapshot validation failed after applying preset: $mismatchDetails")
-                    rollbackToPrevious()
-                    _lightingError.tryEmit("Snapshot validation failed: $mismatchDetails")
-                    throw IllegalStateException("Hardware snapshot validation failed after applying preset: $mismatchDetails")
+                    Log.w("PulseShiftRepo", "Post-commit snapshot validation unconfirmed: $mismatchDetails")
+
+                    // Reconcile from device authoritative state rather than rolling back UI to previous state,
+                    // because the transaction was already committed to controller hardware RAM.
+                    if (snapshot != null && snapshot.isValid) {
+                        applyAuthoritativeSnapshot(snapshot)
+                    }
+
+                    // Mark synchronization as unverified
+                    _lightingState.value = _lightingState.value.copy(
+                        isPendingSync = true,
+                        isHardwareConfirmed = false,
+                        isSyncUnknown = true
+                    )
+                    _hasUnsavedChanges.value = true
+                    _isNvsConfirmed.value = false
+
+                    _lightingError.tryEmit("Hardware commit acknowledged (rev ${ackCommit.activeRevision}), but post-commit snapshot validation unconfirmed: $mismatchDetails")
+                    recordDeviceCommand("Apply preset", DeviceCommandPhase.APPLIED, "Preset '${preset.name}' committed on hardware; snapshot verification unconfirmed ($mismatchDetails)")
                 }
             } finally {
                 if (!transactionCommitted) {
