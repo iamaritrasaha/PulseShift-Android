@@ -43,6 +43,12 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import com.pulseshift.app.data.ble.BleConnectionState
+import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
+import com.pulseshift.app.domain.model.telemetryClockMs
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -82,6 +88,19 @@ fun RpmScreen(
     onNavigateBack: () -> Unit = {}
 ) {
     val telemetry by viewModel.rpmTelemetryState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val connected = connectionState == BleConnectionState.READY ||
+        connectionState == BleConnectionState.RECEIVING_TELEMETRY ||
+        connectionState == BleConnectionState.CONNECTED_WAITING_FOR_DATA
+    var clockMs by remember { mutableLongStateOf(telemetryClockMs()) }
+    LaunchedEffect(connected) {
+        while (connected) {
+            clockMs = telemetryClockMs()
+            delay(250)
+        }
+    }
+    val live = LiveTelemetrySnapshot.from(telemetry, null, connected, maxOf(clockMs, telemetryClockMs()))
+    val currentTelemetry = telemetry.takeIf { live.hasFreshRpmPacket }
     val snapshot by viewModel.configSnapshot.collectAsState()
     val config by viewModel.shiftLightConfig.collectAsState()
     val hasUnsavedChanges by viewModel.hasUnsavedChanges.collectAsState()
@@ -142,13 +161,13 @@ fun RpmScreen(
 
             when (selectedTab) {
                 0 -> BasicRpmView(
-                    telemetry = telemetry,
+                    telemetry = currentTelemetry,
                     snapshot = snapshot,
                     config = config,
                     onThresholdChange = { idx, rpm -> viewModel.updateThreshold(idx, rpm) }
                 )
                 1 -> AdvancedCalibrationView(
-                    telemetry = telemetry,
+                    telemetry = currentTelemetry,
                     snapshot = snapshot,
                     calibrationStatus = viewModel.calibrationStatus.collectAsState().value,
                     calibrationFitResult = viewModel.calibrationFitResult.collectAsState().value,
