@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -159,7 +160,7 @@ class PulseShiftNavigationTest {
             selectTab("Presets")
             compose.onNodeWithText("Defaults").performClick()
             compose.onNodeWithText("Restore Default Presets?").assertIsDisplayed()
-            pressBack()
+            pressSystemBackOnModal()
             compose.onNodeWithText("Restore Default Presets?").assertDoesNotExist()
             compose.onNodeWithContentDescription("Presets").assertIsSelected()
 
@@ -213,7 +214,7 @@ class PulseShiftNavigationTest {
             assertTextFits("Presets Library")
             compose.onNodeWithText("New").performClick()
             compose.onNodeWithText("Save Preset to Library").performScrollTo().assertIsDisplayed()
-            pressBack()
+            pressSystemBackOnModal()
             compose.onNodeWithContentDescription("Presets").assertIsSelected()
             selectTab("Diagnostics")
             assertTextFits("Diagnostics & Health")
@@ -251,6 +252,14 @@ class PulseShiftNavigationTest {
                 layout.getLineEnd(lines.last) == text.length
             assertTrue("Text does not fit: $text (${layout.size}, widest line: $maxWidth px)", fits)
         }
+    }
+
+    private fun pressSystemBackOnModal() {
+        // Send Back to the focused window. Espresso can pick the activity under a Compose dialog.
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val command = automation.executeShellCommand("input keyevent KEYCODE_BACK")
+        ParcelFileDescriptor.AutoCloseInputStream(command).use { it.readBytes() }
+        compose.waitForIdle()
     }
 
     private fun waitForKeyboard(scenario: ActivityScenario<MainActivity>, visible: Boolean) {
