@@ -23,7 +23,6 @@ import com.pulseshift.app.data.ble.PulseShiftBleProtocol
 import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
 import com.pulseshift.app.ui.screens.home.BatteryVoltageCard
 import com.pulseshift.app.ui.theme.PulseShiftTheme
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -68,7 +67,18 @@ class LiveVehicleDataRenderingTest {
                         assertTrue(get(layouts))
                     }
                     assertTrue(layouts.isNotEmpty())
-                    layouts.forEach { assertFalse("Clipped text at $scale, dark=$dark: $label", it.hasVisualOverflow) }
+                    layouts.forEach { layout ->
+                        val lines = 0 until layout.lineCount
+                        val width = lines.maxOf { layout.getLineRight(it) - layout.getLineLeft(it) }
+                        val fits = width <= layout.size.width + 1f &&
+                            layout.multiParagraph.height <= layout.size.height + 1f &&
+                            lines.none(layout::isLineEllipsized) &&
+                            layout.getLineEnd(lines.last) == label.length
+                        assertTrue(
+                            "Clipped text at $scale, dark=$dark: $label, size=${layout.size}, width=$width",
+                            fits
+                        )
+                    }
                 }
             }
         }
