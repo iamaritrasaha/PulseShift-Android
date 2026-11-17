@@ -1142,4 +1142,133 @@ class BleAuthAndLightingRegressionTest {
             assertFalse("isAuthenticated must be reset to FALSE on BLE disconnect", repository.isAuthenticated.value)
         }
     }
+
+    @Test
+    fun testPostCommitSnapshotMismatchReconcilesFromDeviceWithoutRollback() {
+        runBlocking {
+            val dummySecret = ByteArray(12) { 0x55.toByte() }
+            whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(true)
+            whenever(mockCredentialManager.getEnrolledSecret(testDevice.address)).thenReturn(dummySecret)
+            connectedDeviceFlow.value = testDevice
+            connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
+
+            whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+                val cmdBytes = invocation.getArgument<ByteArray>(0)
+                val opcode = cmdBytes[1]
+                val seq = (cmdBytes[2].toInt() and 0xFF) or ((cmdBytes[3].toInt() and 0xFF) shl 8)
+
+                when (opcode) {
+                    PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE -> {
+                        val nonce = byteArrayOf(1, 2, 3, 4)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_REQUEST_CHALLENGE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0,
+                            activeRevision = 0,
+                            payload = nonce
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE -> {
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_AUTHENTICATE,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x01,
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_EFFECT,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_LED_DIRECTION,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD,
+                    PulseShiftBleProtocol.V2_OPCODE_SET_SHIFT_WARNING -> {
+                        // Staged operations return success with staged-only flag (0x02)
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = opcode,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x02, // staged only
+                            activeRevision = 1,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_COMMIT_TRANSACTION -> {
+                        // Hardware successfully commits to RAM with activeRevision = 10
+                        val ack = ConfigAckResponse(
+                            version = 2,
+                            opcode = PulseShiftBleProtocol.V2_OPCODE_COMMIT_TRANSACTION,
+                            sequenceRef = seq,
+                            statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                            resultFlags = 0x05, // applied in RAM (0x01 | 0x04)
+                            activeRevision = 10,
+                            payload = byteArrayOf()
+                        )
+                        configAcksFlow.tryEmit(ack)
+                    }
+                    PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                        // Return device snapshot where hardware applied a clamped brightness of 180
+                        val snapshot = ConfigSnapshot(
+                            snapshotId = seq,
+                            activeRevision = 10,
+                            isPowerOn = true,
+                            brightness = 180, // Controller clamped or diverged from preset's 255
+                            effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                            effectSpeed = 50,
+                            ledColors = List(6) { RgbColor.BrandViolet },
+                            ledDirection = 0,
+                            startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                            startupDurationMs = 2000,
+                            rpmThresholds = listOf(3000, 4000, 5000, 6000, 7000, 8000),
+                            warningRpm = 8500,
+                            warningPatternId = 0,
+                            warningColor = RgbColor.RacingRed,
+                            rpmMultiplier = 40.0f,
+                            canCandidateId = 0x301L,
+                            candidateByteIndex = 0,
+                            isExtendedFrame = false,
+                            calibrationVerified = true
+                        )
+                        configSnapshotsFlow.value = snapshot
+                    }
+                }
+                true
+            }
+
+            val repository = createRepository()
+            assertTrue(repository.authenticateChallengeResponse())
+
+            val targetPreset = Preset(
+                id = "test_preset",
+                name = "Test Preset",
+                brightness = 255, // Note: preset requested 255, but controller snapshot has 180
+                effect = com.pulseshift.app.domain.model.EffectType.STATIC,
+                effectSpeed = 50,
+                ledColors = List(6) { RgbColor.BrandViolet },
+                ledDirection = 0,
+                startupAnimation = com.pulseshift.app.domain.model.StartupAnimation.SWEEP,
+                startupDurationMs = 2000
+            )
+
+            // Applying preset must NOT throw even though post-commit snapshot has mismatched brightness
+            repository.applyPreset(targetPreset)
+
+            // Crucial: UI state must NOT have rolled back to initial state, but reconciled with device
+            assertEquals("Brightness must reconcile from device snapshot (180)", 180, repository.lightingState.value.brightness)
+            assertTrue("isPendingSync must be true indicating unverified snapshot validation", repository.lightingState.value.isPendingSync)
+            assertFalse("isHardwareConfirmed must be false when verification failed", repository.lightingState.value.isHardwareConfirmed)
+            assertTrue("isSyncUnknown must be true for unverified state", repository.lightingState.value.isSyncUnknown)
+            assertTrue("hasUnsavedChanges must remain true", repository.hasUnsavedChanges.value)
+        }
+    }
 }
