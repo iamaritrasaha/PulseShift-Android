@@ -21,6 +21,9 @@ sealed interface OtaUpdateState {
         val currentSlot: Int
     ) : OtaUpdateState
 
+    data object Cancelling : OtaUpdateState
+    data object Cancelled : OtaUpdateState
+
     data class Verifying(
         val targetSlot: Int
     ) : OtaUpdateState

@@ -39,6 +39,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -65,6 +69,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 class BlePulseShiftRepository(
@@ -155,6 +160,10 @@ class BlePulseShiftRepository(
 
     private val _otaUpdateState = MutableStateFlow<OtaUpdateState>(OtaUpdateState.Idle)
     private val otaUpdateMutex = Mutex()
+    private class ActiveOtaTransfer(val sender: Deferred<String?>) {
+        val abortResult = CompletableDeferred<Boolean>()
+    }
+    private val otaDataTransfer = AtomicReference<ActiveOtaTransfer?>()
     override val otaUpdateState: StateFlow<OtaUpdateState> = _otaUpdateState.asStateFlow()
     private var lastOtaConfirmError: String? = null
 
@@ -2389,10 +2398,10 @@ class BlePulseShiftRepository(
             return runOtaUpdate(imageBytes)
         } catch (cancelled: CancellationException) {
             val state = _otaUpdateState.value
-            if (state is OtaUpdateState.Validating || state is OtaUpdateState.Transferring) {
-                val aborted = withContext(NonCancellable) { abortOtaTransfer() }
-                _otaUpdateState.value = if (aborted) OtaUpdateState.Idle else
-                    OtaUpdateState.Failed("Transfer interrupted. The ESP32 did not acknowledge cancellation.")
+            if (state is OtaUpdateState.Validating) {
+                _otaUpdateState.value = OtaUpdateState.Failed(
+                    "Interrupted while waiting for the ESP32 to confirm OTA start."
+                )
             } else if (state is OtaUpdateState.Verifying || state is OtaUpdateState.Rebooting) {
                 _otaUpdateState.value = OtaUpdateState.Failed(
                     "Post-update verification was interrupted. The ESP32 may have switched slots.",
@@ -2469,17 +2478,23 @@ class BlePulseShiftRepository(
             return false
         }
 
-        val appDigest = if (imageBytes[23] == 1.toByte()) {
-            val offset = appPayloadSize - 32
-            md.update(imageBytes, 0, offset)
-            val expected = md.digest()
-            if (!expected.contentEquals(imageBytes.copyOfRange(offset, appPayloadSize))) {
-                _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The ESP32 app digest is invalid.", false)
+        val appDigest = when (imageBytes[23].toInt()) {
+            // ESP-IDF returns SHA-256 over the entire app when there is no appended hash.
+            0 -> shaBytes
+            1 -> {
+                val offset = appPayloadSize - 32
+                md.update(imageBytes, 0, offset)
+                val expected = md.digest()
+                if (!expected.contentEquals(imageBytes.copyOfRange(offset, appPayloadSize))) {
+                    _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The ESP32 app digest is invalid.", false)
+                    return false
+                }
+                expected
+            }
+            else -> {
+                _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The ESP32 hash flag is invalid.", false)
                 return false
             }
-            expected
-        } else {
-            null
         }
 
         val previousVersion = dev.firmwareVersion ?: "unknown"
@@ -2490,6 +2505,7 @@ class BlePulseShiftRepository(
         }
 
         _otaUpdateState.value = OtaUpdateState.Validating(size, shaHex, expectedSlot)
+        val linkGeneration = configLinkGeneration.get()
 
         // 1. Send OTA BEGIN
         val seqBegin = nextSeq()
@@ -2510,49 +2526,14 @@ class BlePulseShiftRepository(
         }
         val targetSlot = beginAck.payload.getOrNull(4)?.toInt()
         if (targetSlot == null || targetSlot !in 0..1 || (expectedSlot != -1 && targetSlot != expectedSlot)) {
-            abortOtaTransfer()
+            abortOtaTransfer(dev.address, linkGeneration)
             _otaUpdateState.value = OtaUpdateState.Failed("The ESP32 did not identify the expected inactive OTA slot.", false)
             return false
         }
 
-        // 2. Stream data chunks (dynamic MTU sizing: up to 230 bytes if MTU >= 64, else 11 bytes fallback)
-        val mtu = bleManager.currentMtu.value
-        val chunkSize = if (mtu >= 64) minOf(mtu - 15, 230) else 11
-        val totalChunks = ((imageBytes.size + chunkSize - 1) / chunkSize)
-        var bytesSent = 0L
-        _otaUpdateState.value = OtaUpdateState.Transferring(0L, size, 0.0f, targetSlot)
-
-        for (chunkIdx in 0 until totalChunks) {
-            val offset = chunkIdx * chunkSize
-            val len = minOf(chunkSize, imageBytes.size - offset)
-            val chunk = imageBytes.copyOfRange(offset, offset + len)
-            val seqData = nextSeq()
-            val dataPacket = PulseShiftBleProtocol.buildOtaDataV2(seqData, chunkIdx, chunk)
-            val dataAck = sendCommandAndWaitAck(dataPacket, seqData, PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, 3000L)
-            val progress = dataAck?.payload?.takeIf { it.size == 6 }?.let {
-                java.nio.ByteBuffer.wrap(it).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            }
-            if (dataAck?.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS || progress == null ||
-                (progress.short.toInt() and 0xFFFF) != (chunkIdx and 0xFFFF) ||
-                progress.int.toLong() != bytesSent + len) {
-                abortOtaTransfer()
-                val reason = if (dataAck?.statusCode == PulseShiftBleProtocol.STATUS_ERR_INVALID_STATE) {
-                    "OTA transfer stopped at chunk $chunkIdx. Check that the engine and CAN bus are inactive."
-                } else {
-                    "The ESP32 did not confirm the expected write progress at chunk $chunkIdx."
-                }
-                _otaUpdateState.value = OtaUpdateState.Failed(reason, true)
-                return false
-            }
-            bytesSent += len
-            if (chunkIdx % 25 == 0 || chunkIdx == totalChunks - 1) {
-                val pct = (bytesSent.toFloat() / size.toFloat()) * 100.0f
-                _otaUpdateState.value = OtaUpdateState.Transferring(bytesSent, size, pct, targetSlot)
-            }
-        }
+        if (!transferOtaData(imageBytes, targetSlot, dev.address, linkGeneration)) return false
 
         // 3. Send OTA END
-        _otaUpdateState.value = OtaUpdateState.Verifying(targetSlot)
         val seqEnd = nextSeq()
         val shaTail = shaBytes.copyOfRange(28, 32)
         val endPacket = PulseShiftBleProtocol.buildOtaEndV2(seqEnd, shaTail, crcVal)
@@ -2790,7 +2771,100 @@ class BlePulseShiftRepository(
             expectedDigest.contentEquals(actual)
         } == true
 
-    private suspend fun abortOtaTransfer(): Boolean {
+    private suspend fun transferOtaData(
+        imageBytes: ByteArray, targetSlot: Int, address: String, linkGeneration: Long
+    ): Boolean = coroutineScope {
+        val transfer = ActiveOtaTransfer(async(start = CoroutineStart.LAZY) {
+            sendOtaData(imageBytes, targetSlot)
+        })
+        otaDataTransfer.set(transfer)
+        _otaUpdateState.value = OtaUpdateState.Transferring(0L, imageBytes.size.toLong(), 0.0f, targetSlot)
+        try {
+            val failure = try {
+                transfer.sender.await()
+            } catch (cancelled: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                if (otaDataTransfer.get() === transfer) throw cancelled
+                null
+            }
+
+            // Whoever removes the transfer first owns the transition. Once this
+            // succeeds here, a late Cancel cannot send ABORT as END is starting.
+            if (!otaDataTransfer.compareAndSet(transfer, null)) {
+                finishOtaCancellation(transfer, address, linkGeneration)
+                return@coroutineScope false
+            }
+            if (failure != null) {
+                withContext(NonCancellable) {
+                    _otaUpdateState.value = OtaUpdateState.Cancelling
+                    abortOtaTransfer(address, linkGeneration)
+                    _otaUpdateState.value = OtaUpdateState.Failed(failure)
+                }
+                return@coroutineScope false
+            }
+            _otaUpdateState.value = OtaUpdateState.Verifying(targetSlot)
+            true
+        } catch (cancelled: CancellationException) {
+            otaDataTransfer.compareAndSet(transfer, null)
+            if (_otaUpdateState.value is OtaUpdateState.Transferring) {
+                finishOtaCancellation(transfer, address, linkGeneration)
+            }
+            throw cancelled
+        } finally {
+            otaDataTransfer.compareAndSet(transfer, null)
+            transfer.abortResult.complete(false)
+        }
+    }
+
+    private suspend fun sendOtaData(imageBytes: ByteArray, targetSlot: Int): String? {
+        val mtu = bleManager.currentMtu.value
+        val chunkSize = if (mtu >= 64) minOf(mtu - 15, 230) else 11
+        val totalChunks = (imageBytes.size + chunkSize - 1) / chunkSize
+        var bytesSent = 0L
+        for (chunkIdx in 0 until totalChunks) {
+            currentCoroutineContext().ensureActive()
+            val offset = chunkIdx * chunkSize
+            val len = minOf(chunkSize, imageBytes.size - offset)
+            val chunk = imageBytes.copyOfRange(offset, offset + len)
+            val seq = nextSeq()
+            val packet = PulseShiftBleProtocol.buildOtaDataV2(seq, chunkIdx, chunk)
+            val ack = sendCommandAndWaitAck(packet, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_DATA, 3000L)
+            val progress = ack?.payload?.takeIf { it.size == 6 }?.let {
+                java.nio.ByteBuffer.wrap(it).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            }
+            if (ack?.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS || progress == null ||
+                (progress.short.toInt() and 0xFFFF) != (chunkIdx and 0xFFFF) ||
+                progress.int.toLong() != bytesSent + len) {
+                return if (ack?.statusCode == PulseShiftBleProtocol.STATUS_ERR_INVALID_STATE) {
+                    "OTA transfer stopped at chunk $chunkIdx. Check that the engine and CAN bus are inactive."
+                } else {
+                    "The ESP32 did not confirm the expected write progress at chunk $chunkIdx."
+                }
+            }
+            bytesSent += len
+            if (chunkIdx % 25 == 0 || chunkIdx == totalChunks - 1) {
+                val size = imageBytes.size.toLong()
+                _otaUpdateState.value = OtaUpdateState.Transferring(bytesSent, size, bytesSent * 100f / size, targetSlot)
+            }
+        }
+        return null
+    }
+
+    private suspend fun finishOtaCancellation(transfer: ActiveOtaTransfer, address: String, linkGeneration: Long) {
+        withContext(NonCancellable) {
+            transfer.sender.cancelAndJoin()
+            _otaUpdateState.value = OtaUpdateState.Cancelling
+            val acknowledged = abortOtaTransfer(address, linkGeneration)
+            _otaUpdateState.value = if (acknowledged) OtaUpdateState.Cancelled else
+                OtaUpdateState.Failed("Transfer stopped. The ESP32 did not acknowledge cancellation.")
+            transfer.abortResult.complete(acknowledged)
+        }
+    }
+
+    private suspend fun abortOtaTransfer(address: String, linkGeneration: Long): Boolean {
+        val device = connectedDevice.value
+        if (device?.address != address || !device.isConnected || configLinkGeneration.get() != linkGeneration ||
+            connectionState.value !in configConnectionStates) return false
         val seq = nextSeq()
         val abortPkt = PulseShiftBleProtocol.buildOtaAbortV2(seq)
         return sendCommandAndWaitAck(abortPkt, seq, PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT, 2000L)
@@ -2798,9 +2872,18 @@ class BlePulseShiftRepository(
     }
 
     override suspend fun cancelOtaUpdate(): Boolean {
-        if (otaUpdateMutex.isLocked) return false
-        _otaUpdateState.value = OtaUpdateState.Idle
-        return true
+        val transfer = otaDataTransfer.getAndSet(null)
+        if (transfer != null) {
+            transfer.sender.cancel()
+            return transfer.abortResult.await()
+        }
+        if (!otaUpdateMutex.tryLock()) return false
+        try {
+            _otaUpdateState.value = OtaUpdateState.Idle
+            return true
+        } finally {
+            otaUpdateMutex.unlock()
+        }
     }
 
     override suspend fun confirmOtaUpdate(): Boolean {

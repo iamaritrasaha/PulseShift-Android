@@ -7,7 +7,6 @@ import com.pulseshift.app.data.repository.PulseShiftRepository
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.OtaUpdateState
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -40,12 +39,7 @@ class SettingsViewModel(
 
     fun cancelOtaUpdate() {
         viewModelScope.launch {
-            if (otaUpdateState.value is OtaUpdateState.Transferring) {
-                otaJob?.cancelAndJoin()
-            } else if (otaUpdateState.value is OtaUpdateState.Success ||
-                otaUpdateState.value is OtaUpdateState.Failed) {
-                repository.cancelOtaUpdate()
-            }
+            repository.cancelOtaUpdate()
         }
     }
 

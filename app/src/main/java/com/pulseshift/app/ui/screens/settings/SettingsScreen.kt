@@ -378,7 +378,8 @@ fun SettingsScreen(
         if (otaState !is OtaUpdateState.Idle) {
             AlertDialog(
                 onDismissRequest = {
-                    if (otaState is OtaUpdateState.Success || otaState is OtaUpdateState.Failed) {
+                    if (otaState is OtaUpdateState.Success || otaState is OtaUpdateState.Failed ||
+                        otaState is OtaUpdateState.Cancelled) {
                         viewModel.cancelOtaUpdate()
                     }
                 },
@@ -392,6 +393,8 @@ fun SettingsScreen(
                             when (val state = otaState) {
                                 is OtaUpdateState.Validating -> "Validating Firmware..."
                                 is OtaUpdateState.Transferring -> "Streaming Firmware..."
+                                OtaUpdateState.Cancelling -> "Cancelling Update..."
+                                OtaUpdateState.Cancelled -> "Update Cancelled"
                                 is OtaUpdateState.Verifying -> "Verifying Checksum..."
                                 is OtaUpdateState.Rebooting -> "ESP32 Rebooting..."
                                 is OtaUpdateState.Success -> if (state.imageIdentityVerified) {
@@ -430,6 +433,11 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
+                            OtaUpdateState.Cancelling -> {
+                                Text("Waiting for the ESP32 to acknowledge cancellation.")
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            OtaUpdateState.Cancelled -> Text("The ESP32 acknowledged cancellation.")
                             is OtaUpdateState.Verifying -> {
                                 Text("Waiting for the ESP32 to check the image and signature.")
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -455,7 +463,7 @@ fun SettingsScreen(
                 },
                 confirmButton = {
                     when (otaState) {
-                        is OtaUpdateState.Success, is OtaUpdateState.Failed -> {
+                        is OtaUpdateState.Success, is OtaUpdateState.Failed, OtaUpdateState.Cancelled -> {
                             TextButton(onClick = { viewModel.cancelOtaUpdate() }) {
                                 Text("Done")
                             }

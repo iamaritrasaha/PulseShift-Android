@@ -15,15 +15,21 @@ import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.DeviceCommandPhase
+import com.pulseshift.app.domain.model.DeviceCapabilities
+import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.WarningStyle
+import com.pulseshift.app.ui.screens.settings.SettingsViewModel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -38,10 +44,16 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argThat
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.security.MessageDigest
+import java.util.zip.CRC32
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class BleAuthAndLightingRegressionTest {
@@ -104,6 +116,159 @@ class BleAuthAndLightingRegressionTest {
             dataStore = mockDataStore,
             credentialManager = mockCredentialManager
         )
+    }
+
+    private fun otaPackage(): ByteArray {
+        val payload = ByteArray(65536).apply { this[0] = 0xE9.toByte() }
+        val crc = CRC32().apply { update(payload) }
+        val trailer = ByteBuffer.allocate(76).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(0x544F5350).put(1).put(0).putInt(crc.value.toInt()).putShort(64)
+        return payload + trailer.array()
+    }
+
+    private fun prepareOtaDevice() {
+        connectedDeviceFlow.value = testDevice.copy(
+            isConnected = true,
+            capabilities = DeviceCapabilities(hasConfigV2Support = true, supportsOtaUpdate = true, otaActiveSlot = 0)
+        )
+        whenever(mockBleManager.currentMtu).thenReturn(MutableStateFlow(512))
+    }
+
+    private fun otaAck(frame: ByteArray, payload: ByteArray = byteArrayOf()) {
+        val sequence = (frame[2].toInt() and 0xff) or ((frame[3].toInt() and 0xff) shl 8)
+        check(configAcksFlow.tryEmit(ConfigAckResponse(
+            opcode = frame[1], sequenceRef = sequence, statusCode = 0,
+            resultFlags = 0, activeRevision = 0, payload = payload
+        )))
+    }
+
+    @Test
+    fun otaRepositoryCancelStopsAnActiveTransfer(): Unit = runBlocking {
+        prepareOtaDevice()
+        val dataStarted = CompletableDeferred<Unit>()
+        val abortSent = CompletableDeferred<Unit>()
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val frame = invocation.getArgument<ByteArray>(0)
+            when (frame[1]) {
+                PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN -> otaAck(frame, byteArrayOf(0, 0, 0, 0, 1, 11))
+                PulseShiftBleProtocol.V2_OPCODE_OTA_DATA -> dataStarted.complete(Unit)
+                PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT -> {
+                    abortSent.complete(Unit)
+                    otaAck(frame)
+                }
+            }
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        val updating = async { repository.startOtaUpdate(otaPackage()) }
+        withTimeout(5000) { dataStarted.await() }
+        assertTrue("Cancel should succeed while OTA_DATA is waiting for its ACK", repository.cancelOtaUpdate())
+        assertTrue(abortSent.isCompleted)
+        assertFalse(updating.await())
+        assertEquals(OtaUpdateState.Cancelled, repository.otaUpdateState.value)
+        verify(mockBleManager, never()).enqueueConfigCommand(argThat { get(1) == PulseShiftBleProtocol.V2_OPCODE_OTA_END })
+    }
+
+    @Test
+    fun settingsCancelStopsChunksAndShowsAcknowledgedCancellation() = settingsCancelDuringTransfer(true)
+
+    @Test
+    fun settingsCancelShowsUnconfirmedOutcomeAfterMissingAbortAck() = settingsCancelDuringTransfer(false)
+
+    private fun settingsCancelDuringTransfer(acknowledged: Boolean): Unit = runBlocking {
+        prepareOtaDevice()
+        whenever(mockDataStore.themeMode).thenReturn(MutableStateFlow(0))
+        whenever(mockDataStore.dynamicColor).thenReturn(MutableStateFlow(false))
+        val dataStarted = CompletableDeferred<Unit>()
+        val abortFrame = CompletableDeferred<ByteArray>()
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val frame = invocation.getArgument<ByteArray>(0)
+            when (frame[1]) {
+                PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN -> otaAck(frame, byteArrayOf(0, 0, 0, 0, 1, 11))
+                PulseShiftBleProtocol.V2_OPCODE_OTA_DATA -> dataStarted.complete(Unit)
+                PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT -> abortFrame.complete(frame)
+            }
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        val settings = SettingsViewModel(mockDataStore, repository)
+        settings.startOtaUpdate(otaPackage())
+        withTimeout(5000) { dataStarted.await() }
+        assertTrue(settings.otaUpdateState.value is OtaUpdateState.Transferring)
+
+        // SettingsScreen's Cancel button invokes this action.
+        settings.cancelOtaUpdate()
+        val frame = withTimeout(5000) { abortFrame.await() }
+        assertEquals(OtaUpdateState.Cancelling, settings.otaUpdateState.value)
+        if (acknowledged) otaAck(frame)
+        val outcome = withTimeout(5000) {
+            settings.otaUpdateState.first { it is OtaUpdateState.Cancelled || it is OtaUpdateState.Failed }
+        }
+        if (acknowledged) {
+            assertEquals(OtaUpdateState.Cancelled, outcome)
+        } else {
+            assertTrue((outcome as OtaUpdateState.Failed).reason.contains("did not acknowledge"))
+        }
+        verify(mockBleManager, times(1)).enqueueConfigCommand(argThat { get(1) == PulseShiftBleProtocol.V2_OPCODE_OTA_DATA })
+        verify(mockBleManager, times(1)).enqueueConfigCommand(argThat { get(1) == PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT })
+        verify(mockBleManager, never()).enqueueConfigCommand(argThat { get(1) == PulseShiftBleProtocol.V2_OPCODE_OTA_END })
+    }
+
+    @Test
+    fun cancelAfterEndIsWithheldAndImageWithoutAppendedHashIsConfirmed(): Unit = runBlocking {
+        prepareOtaDevice()
+        val image = otaPackage()
+        val digest = MessageDigest.getInstance("SHA-256").digest(image.copyOf(image.size - 76))
+        var bytesWritten = 0
+        var confirmed = false
+        val endFrame = CompletableDeferred<ByteArray>()
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val frame = invocation.getArgument<ByteArray>(0)
+            when (frame[1]) {
+                PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN -> otaAck(frame, byteArrayOf(0, 0, 0, 0, 1, 11))
+                PulseShiftBleProtocol.V2_OPCODE_OTA_DATA -> {
+                    bytesWritten += frame[8].toInt() and 0xff
+                    val progress = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+                        .put(frame[6]).put(frame[7]).putInt(bytesWritten)
+                    otaAck(frame, progress.array())
+                }
+                PulseShiftBleProtocol.V2_OPCODE_OTA_END -> endFrame.complete(frame)
+                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS -> {
+                    if (frame[4] == 0.toByte()) {
+                        otaAck(frame, byteArrayOf(0, 1, 0, 0, 0, 0, if (confirmed) 2 else 1, 1))
+                    } else {
+                        val part = frame[6].toInt()
+                        otaAck(frame, byteArrayOf(part.toByte()) + digest.copyOfRange(part * 8, part * 8 + 8))
+                    }
+                }
+                PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM -> {
+                    confirmed = true
+                    otaAck(frame, byteArrayOf(1))
+                }
+            }
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        doAnswer {
+            val device = checkNotNull(connectedDeviceFlow.value)
+            connectedDeviceFlow.value = device.copy(capabilities = device.capabilities.copy(
+                firmwareMajor = 2, firmwareMinor = 3, otaActiveSlot = 1, otaFlags = 0x04
+            ))
+            repository.setAuthenticatedForTesting(true)
+            null
+        }.whenever(mockBleManager).prepareForOtaReboot(2500L)
+        val updating = async { repository.startOtaUpdate(image) }
+        val frame = withTimeout(10000) { endFrame.await() }
+        assertEquals(image.size, bytesWritten)
+        assertTrue(repository.otaUpdateState.value is OtaUpdateState.Verifying)
+        assertFalse(repository.cancelOtaUpdate())
+        otaAck(frame, byteArrayOf(1))
+        assertTrue(withTimeout(15000) { updating.await() })
+        assertTrue((repository.otaUpdateState.value as OtaUpdateState.Success).imageIdentityVerified)
+        verify(mockBleManager, never()).enqueueConfigCommand(argThat { get(1) == PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT })
     }
 
     @Test

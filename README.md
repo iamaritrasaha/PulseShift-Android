@@ -210,11 +210,13 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 6. **Post-Reboot Verification & No False Success:**
    The Android app reconnects after reboot and performs strict validation:
    - Checks that the running slot matches the target slot and that the firmware reports a version.
-   - Compares the running ESP32 app digest with the selected image when the firmware supports the digest query. For older firmware it reports confirmation of the boot slot and leaves image identity unverified.
+   - Compares the running ESP32 app digest with the selected image when the firmware supports the digest query. For ESP32 images without an appended validation hash, it compares the SHA-256 of the entire app payload. For older firmware it reports confirmation of the boot slot and leaves image identity unverified.
    - Reauthenticates the owner on the **new** BLE connection. Authentication does not persist across a reboot.
    - Queries `BLE_CFG_OP_OTA_STATUS (0x65)` for actual bootloader image state and the presence of a rollback candidate. A missing or unsafe state is a hard failure.
    - Issues `BLE_CFG_OP_OTA_CONFIRM (0x64)` only after reauthentication and state verification. If an ACK is lost, it retries once using the idempotent confirmation command.
    - The app reports the confirmation error status rather than claiming success when the handshake is missing or rejected.
+
+   **Cancellation:** Cancel stops sending chunks and requests OTA_ABORT while the transfer is active. The dialog reports cancellation as confirmed only after an ESP32 acknowledgment. Once the app starts OTA_END, it proceeds with verification.
 
    **Rollback prerequisite:** The Arduino-ESP32 3.3.12 sketch overrides the core's `verifyRollbackLater()` hook to defer validation until owner confirmation. The installed bootloader controls the transition to pending verification and must support rollback.
 
