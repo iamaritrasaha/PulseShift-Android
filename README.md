@@ -11,6 +11,13 @@ PulseShift for Android provides complete standalone control over the physical ES
 - **Firmware repository:** [PulseShift Firmware](https://github.com/iamaritrasaha/PulseShift)
 - **Protocol wire specification:** [docs/BLE-PROTOCOL.md](https://github.com/iamaritrasaha/PulseShift/blob/main/docs/BLE-PROTOCOL.md)
 
+### Current Verification Status (2026-11-17)
+
+- **Android and ESP32 bench operation:** The owner reports the Android companion working with the real ESP32 after the USB firmware update. This is a hands-on user report, not an independent certification of every feature.
+- **Android build and tests:** Android commit `af3cb34` built successfully; 166 unit tests passed and the debug APK signature was verified in the local recovery session.
+- **Firmware compatibility:** Firmware commit `4c7fc5b` was USB-flashed to `app1` and booted with state `VALID`; the existing owner credential and saved device configuration were preserved.
+- **Not yet physically validated:** Six-LED visible output, the motorcycle power harness, and end-to-end signed BLE OTA with rollback/failure injection remain pending. A working BLE connection is not proof that OTA is safe for field use.
+
 ---
 
 ## Table of Contents
@@ -195,6 +202,8 @@ To guarantee that the Android application can be updated freely without breaking
 
 PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrades directly over BLE, eliminating the need to connect a USB cable to the motorcycle.
 
+> **Hardware validation status:** The OTA code and its cancellation behavior have passed software tests, but a signed OTA transfer, boot confirmation, and rollback sequence have **not yet been demonstrated on the physical ESP32**. Use USB flashing on the bench until those tests pass.
+
 ### Safety Invariants & Interlocks
 
 1. **Dual-Partition Architecture:**
@@ -261,6 +270,6 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 
 ## 10. Known Limitations & Safety Safeguards
 
-- **Provisional Engine Speed (CAN ID `0x301`):** While 22,542 real CAN frames have been captured with 0 errors on a 2025 Bajaj Pulsar NS125 ABS, the RPM conversion multiplier (40.0) remains an unverified provisional estimate. Shift light mode 4 is disabled until independent tachometer calibration is executed.
+- **Provisional Engine Speed (CAN ID `0x301`):** The preserved 23,370-record motorcycle capture passed CRC16 validation after USB flashing, but the RPM conversion multiplier (40.0) remains an unverified provisional estimate. Shift light mode 4 is disabled until independent tachometer calibration is executed.
 - **Strictly Passive CAN:** The firmware never transmits CAN frames. CTX is clamped to 3V3, GPIO17 is air-gapped, and the TWAI controller operates exclusively in listen-only mode.
 - **Physical BOOT Requirement for Key Enrollment:** Physical button access is required to enroll a phone or recover credentials. This guarantees that nearby unauthorised BLE devices cannot hijack shift light or recording parameters.
