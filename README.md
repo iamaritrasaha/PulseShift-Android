@@ -35,35 +35,30 @@ PulseShift for Android provides complete standalone control over the physical ES
 
 ---
 
-### Live Controller Data & Optional Voltage Experiment
+### Live Vehicle Data
 
-The Dashboard's **Live Controller Data** section reads the firmware's existing BLE
-RPM telemetry (10 Hz) and health notifications (1 Hz). It displays received CAN
-frames, raw RPM candidate, sample age, ESP32 uptime, active traffic, missed CAN
-frames, FIFO overruns, bus errors, recording state, preserved-capture flag, and
-LittleFS health. Values show an unavailable dash if disconnected, missing, or
-stale; this page does not write to the ESP32.
+The dashboard shows provisional RPM, CAN activity and health, controller uptime,
+recording, preserved-capture status and LittleFS health. Diagnostics shows raw RPM
+and signal age, missed frames, FIFO overruns and CAN errors. RPM notifications are
+sent at 10 Hz and health at 1 Hz. Expired and disconnected readings show a dash.
 
-| Desired vehicle signal | Available live? | Evidence / limitation |
-|---|---|---|
-| Provisional engine RPM | **Yes, uncalibrated** | Current BLE RPM telemetry, CAN 0x301[0] x40. Calibration is not verified. |
-| Raw RPM candidate and age | **Yes** | Existing BLE RPM telemetry; freshness is enforced. |
-| CAN RX frames, traffic state, driver errors | **Yes** | Existing BLE RPM and health packets. Counters are cumulative for the current controller session. |
-| ESP32 uptime and flash/storage flags | **Yes** | Existing BLE RPM and health packets. |
-| Motorcycle battery voltage | **Experimental estimate with paired firmware only** | Standard CAN `0x303[1]` raw byte, hypothesized `raw / 10.0 V`. App displays **EXPERIMENTAL** plus the raw byte only when tagged `0xA5` and fresh; old firmware or stale `0x5A` displays `— V`. Not validated against multimeter. |
-| Engine/ambient temperature | **No** | 0x302 byte 1 changed during the saved capture; sensor identity and calibration are unknown, and this is not streamed as a live value. Shows `— °C`. |
+The experimental battery estimate uses standard CAN `0x303[1]` divided by 10.0.
+Compatible firmware publishes a fresh raw byte in the reserved field of the same
+20-byte RPM BLE packet. The app shows the raw byte and labels the estimate
+**EXPERIMENTAL**. Older firmware and stale samples show **— V**. The scale is
+uncalibrated and drives no battery warnings.
 
-The November 17, 2026 capture consists exclusively of **23,370 key-on,
-engine-off CAN frames**, not reference-calibrated voltage. The paired optional
-firmware experiment from the feature branch passively samples `0x303[1]`
-without changing the existing RPM decoder or CAN traffic. It publishes a
-tagged raw byte using reserved RPM BLE packet positions 18-19. **The Android
-APK alone cannot activate the meter**: the matching firmware must be reviewed,
-backed up and installed separately using an application-only method that
-preserves captured CAN data and owner credentials. No firmware has been
-flashed as part of this PR. Measure real battery-terminal voltage independently
-at multiple points (key-on, idling, charging) before treating the hypothesis
-as verified. Temperature remains unverified and unavailable.
+Diagnostics can request a raw snapshot of `0x302[1]`, `0x302[5]`, `0x452[7]`,
+and `0x540[3]` with paired firmware. Samples carry no physical units.
+
+### Signed Bluetooth OTA
+
+Settings requires an authenticated dual-slot controller with a valid boot slot,
+fresh idle CAN telemetry, and recording stopped. Android checks the selected
+package against the controller's trusted P-256 key before transfer. After
+reconnect it verifies the target slot and running image digest, reauthenticates,
+and confirms the pending image. Success requires a final VALID state readback.
+Physical OTA and rollback require bench validation with stable power and USB recovery.
 
 ---
 

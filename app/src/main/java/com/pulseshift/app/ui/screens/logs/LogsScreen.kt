@@ -80,11 +80,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.domain.model.BleDevice
-import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.DiagnosticLogMessage
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LogSeverity
-import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.ui.components.StatusPill
 import com.pulseshift.app.ui.theme.HardwareAmberWarning
 import com.pulseshift.app.ui.theme.HardwareGreenVerified
@@ -95,6 +93,13 @@ import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.pulseshift.app.ui.components.SectionCard
+import com.pulseshift.app.domain.model.DiagnosticsReport
+import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
+import com.pulseshift.app.domain.model.telemetryClockMs
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,6 +126,18 @@ fun LogsScreen(
     var showExportMenu by remember { mutableStateOf(false) }
     var showRestartConfirm by remember { mutableStateOf(false) }
     var showClearDiagConfirm by remember { mutableStateOf(false) }
+
+    val connected = connectedDevice?.isConnected == true
+    var clockMs by remember { mutableLongStateOf(telemetryClockMs()) }
+    LaunchedEffect(connected) {
+        while (connected) {
+            clockMs = telemetryClockMs()
+            delay(250)
+        }
+    }
+    val live = LiveTelemetrySnapshot.from(
+        rpmTelemetry, canHealth, connected, maxOf(clockMs, telemetryClockMs())
+    )
 
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
 
@@ -151,10 +168,13 @@ fun LogsScreen(
                     Icon(Icons.Rounded.Terminal, contentDescription = "Terminal")
                 }
             }
-            val isCanHealthy = canHealth?.hasLossOrErrors == false
             StatusPill(
-                text = if (isCanHealthy) "CAN OK" else "CAN INIT",
-                color = if (isCanHealthy) HardwareGreenVerified else HardwareAmberWarning
+                text = when (live.canHealthy) {
+                    true -> "CAN operational"
+                    false -> "CAN unavailable"
+                    null -> "Waiting for CAN status"
+                },
+                color = if (live.canHealthy == true) HardwareGreenVerified else HardwareAmberWarning
             )
         }
 
@@ -183,9 +203,10 @@ fun LogsScreen(
 
         when (selectedTab) {
             0 -> DiagnosticsOverviewTab(
-                canHealth = canHealth,
-                rpmTelemetry = rpmTelemetry,
-                connectedDevice = connectedDevice
+                live = live,
+                experimentalReport = diagnosticsReport.takeIf { connected },
+                connectedDevice = connectedDevice,
+                onRefreshReport = viewModel::requestDiagnosticsReport
             )
             1 -> EventLogsTab(
                 logs = logs,
@@ -522,10 +543,16 @@ fun DeviceCaptureTab(
 }
 
 @Composable
-fun DiagnosticsOverviewTab(
-    canHealth: CanHealthState?,
-    rpmTelemetry: RpmTelemetryState?,
-    connectedDevice: BleDevice?
+private fun DiagnosticReading(label: String, value: Any?) {
+    Text("$label · ${value ?: "—"}", style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun DiagnosticsOverviewTab(
+    live: LiveTelemetrySnapshot,
+    experimentalReport: DiagnosticsReport?,
+    connectedDevice: BleDevice?,
+    onRefreshReport: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -543,28 +570,34 @@ fun DiagnosticsOverviewTab(
             Column(modifier = Modifier.padding(PulseShiftSpacing.CardPadding), verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
                 Text("CAN Bus & TWAI Health", style = MaterialTheme.typography.titleMedium)
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("Total CAN RX Frames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${rpmTelemetry?.totalCanFramesReceived ?: 0}", style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace), fontWeight = FontWeight.Bold)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("Driver Missed Frames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${canHealth?.driverMissedFrames ?: 0}", style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace), color = if ((canHealth?.driverMissedFrames ?: 0) > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("Hardware FIFO Overruns", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${canHealth?.hardwareFifoOverruns ?: 0}", style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("CAN Bus Error Counter", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${canHealth?.canBusErrors ?: 0}", style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
-                    }
-                }
+                DiagnosticReading("Total CAN RX frames", live.receivedFrames)
+                DiagnosticReading("Driver missed frames", live.missedFrames)
+                DiagnosticReading("Hardware FIFO overruns", live.fifoOverruns)
+                DiagnosticReading("CAN bus errors", live.busErrors)
+                DiagnosticReading("RPM candidate raw byte", live.candidateRawByte?.let {
+                    "0x%02X".format(Locale.US, it)
+                })
+                DiagnosticReading("RPM signal age", live.candidateAgeMs?.let { "$it ms" })
             }
+        }
+
+        SectionCard(title = "Experimental CAN bytes") {
+            val values = experimentalReport?.experimentalCanBytes
+            Text(
+                when {
+                    values != null -> "Snapshot at controller uptime ${experimentalReport.uptimeMs / 1000} s. Raw bytes."
+                    experimentalReport != null -> "The installed firmware does not report these fields."
+                    else -> "Read a snapshot from the controller."
+                },
+                style = MaterialTheme.typography.bodyMedium
+            )
+            listOf("0x302[1]", "0x302[5]", "0x452[7]", "0x540[3]").forEachIndexed { index, label ->
+                DiagnosticReading(label, values?.get(index)?.let { "0x%02X".format(Locale.US, it) })
+            }
+            OutlinedButton(
+                onClick = onRefreshReport,
+                enabled = connectedDevice?.isConnected == true && connectedDevice.capabilities.supportsDiagnosticsTlv
+            ) { Text("Read CAN snapshot") }
         }
 
         // 2. BLE Interface & Target Device Info Card
@@ -589,7 +622,7 @@ fun DiagnosticsOverviewTab(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Signal Strength (RSSI)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("${connectedDevice?.rssi ?: 0} dBm", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(connectedDevice?.rssi?.let { "$it dBm" } ?: "—", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -604,11 +637,11 @@ fun DiagnosticsOverviewTab(
                 Text("ESP32 Flash Storage & Recording", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("LittleFS File System", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(if (canHealth?.healthFlags?.isLittleFsMounted == true) "Mounted (Healthy)" else "Unmounted / Error", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(live.storageMounted?.let { if (it) "Mounted" else "Unavailable" } ?: "—", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Session Recorded Frames", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("${canHealth?.recordedFramesInCurrentSession ?: 0}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    Text(live.recordedThisSession?.toString() ?: "—", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
             }
         }

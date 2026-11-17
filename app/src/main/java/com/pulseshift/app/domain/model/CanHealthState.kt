@@ -27,7 +27,7 @@ data class CanHealthState(
     val hardwareFifoOverruns: Long,
     val canBusErrors: Long,
     val recordedFramesInCurrentSession: Long,
-    val timestampReceivedMs: Long = System.currentTimeMillis()
+    val timestampReceivedMs: Long = telemetryClockMs()
 ) {
     val hasLossOrErrors: Boolean
         get() = driverMissedFrames > 0 || hardwareFifoOverruns > 0 || canBusErrors > 0

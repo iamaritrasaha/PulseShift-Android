@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +34,6 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -57,8 +58,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
-import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
+import com.pulseshift.app.domain.model.telemetryClockMs
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -115,10 +116,21 @@ fun HomeScreen(
     val device by viewModel.connectedDevice.collectAsState()
     val rpm by viewModel.rpmTelemetryState.collectAsState()
     val canHealth by viewModel.canHealthState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val telemetryConnected = connectionState == BleConnectionState.READY ||
+        connectionState == BleConnectionState.RECEIVING_TELEMETRY ||
+        connectionState == BleConnectionState.CONNECTED_WAITING_FOR_DATA
+    var clockMs by remember { mutableLongStateOf(telemetryClockMs()) }
+    LaunchedEffect(telemetryConnected) {
+        while (telemetryConnected) {
+            clockMs = telemetryClockMs()
+            delay(250)
+        }
+    }
+    val live = LiveTelemetrySnapshot.from(rpm, canHealth, telemetryConnected, maxOf(clockMs, telemetryClockMs()))
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val presets by viewModel.presets.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
-    val connectionState by viewModel.connectionState.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
     val reconnecting by viewModel.isReconnecting.collectAsState()
     val syncErrors = viewModel.lightingSyncError
@@ -148,22 +160,18 @@ fun HomeScreen(
                     onNavigateToDevices = onNavigateToDevices
                 )
             }
+            item { BatteryVoltageCard(live, telemetryConnected) }
             item {
                 RpmGaugeCard(
-                    rpm = rpm,
+                    rpm = rpm.takeIf { live.hasFreshRpmPacket },
                     shiftConfig = shiftConfig,
                     lighting = lighting,
                     onNavigateToRpm = onNavigateToRpm,
                     onNavigateToLighting = onNavigateToLighting
                 )
             }
-            item {
-                LiveControllerDataCard(
-                    rpm = rpm,
-                    health = canHealth,
-                    connectionState = connectionState
-                )
-            }
+            item { ControllerHealthCard(live, telemetryConnected) }
+            item { CaptureStorageCard(live) }
             item {
                 LightControlCard(
                     lighting = lighting,
@@ -291,6 +299,7 @@ private fun ConnectionBanner(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RpmGaugeCard(
     rpm: RpmTelemetryState?,
@@ -313,43 +322,27 @@ private fun RpmGaugeCard(
         val currentRpm = if (available) rpm!!.provisionalRpm else 0
         val lightsRendering = rpm?.statusFlags?.isPhysicalShiftLightsEnabled == true
 
-        // 1. Digital RPM Speedometer Readout
-        Row(
-            verticalAlignment = Alignment.Bottom,
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel),
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = if (available) String.format(Locale.US, "%,d", currentRpm) else "--",
+                text = if (available) String.format(Locale.US, "%,d", currentRpm) else "—",
                 style = PulseShiftMonoDisplay,
-                color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterVertically)
             )
-            Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
-            Text(
-                "RPM",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
+            Text("RPM", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.CenterVertically))
+            StatusPill(
+                text = when {
+                    rpm == null -> "No signal"
+                    available -> "Signal fresh"
+                    else -> "RPM unavailable"
+                },
+                color = if (available) HardwareGreenVerified else HardwareAmberWarning,
+                modifier = Modifier.align(Alignment.CenterVertically)
             )
-            Spacer(Modifier.weight(1f))
-            Column(horizontalAlignment = Alignment.End) {
-                StatusPill(
-                    text = when {
-                        rpm == null -> "NO SIGNAL"
-                        !rpm.statusFlags.isCandidateFresh -> "CAN STALE"
-                        else -> "SIGNAL FRESH"
-                    },
-                    color = when {
-                        rpm == null || !rpm.statusFlags.isCandidateFresh -> HardwareRedError
-                        else -> HardwareGreenVerified
-                    }
-                )
-                Spacer(Modifier.height(PulseShiftSpacing.Micro))
-                Text(
-                    text = if (rpm == null) "CAN RX: --" else "CAN RX: ${rpm.totalCanFramesReceived}",
-                    style = PulseShiftMonoTiny,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -531,110 +524,58 @@ private fun RpmGaugeCard(
     }
 }
 
-/**
- * Read-only dashboard summary of telemetry the already-flashed ESP32 actually
- * exposes over BLE. Voltage and temperature are NOT present in that protocol.
- */
 @Composable
-private fun LiveControllerDataCard(
-    rpm: RpmTelemetryState?,
-    health: CanHealthState?,
-    connectionState: BleConnectionState
-) {
-    val connected = connectionState == BleConnectionState.READY ||
-        connectionState == BleConnectionState.RECEIVING_TELEMETRY ||
-        connectionState == BleConnectionState.CONNECTED_WAITING_FOR_DATA
-
-    // A stalled notification stream must age out even if no new packet arrives.
-    var clockMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(connected) {
-        clockMs = System.currentTimeMillis()
-        while (connected) {
-            delay(1_000)
-            clockMs = System.currentTimeMillis()
-        }
-    }
-    val state = LiveTelemetrySnapshot.from(
-        telemetry = rpm,
-        health = health,
-        connected = connected,
-        nowMs = maxOf(clockMs, System.currentTimeMillis())
-    )
-
-    SectionCard(
-        title = "Live Controller Data",
-        subtitle = "ESP32 BLE telemetry · read-only",
-        headerAction = {
-            StatusPill(
-                text = when {
-                    !connected -> "OFFLINE"
-                    state.hasLiveData -> "LIVE"
-                    else -> "WAITING"
-                },
-                color = if (state.hasLiveData) HardwareGreenVerified else HardwareAmberWarning
-            )
-        }
-    ) {
+internal fun BatteryVoltageCard(state: LiveTelemetrySnapshot, connected: Boolean) {
+    SectionCard(title = "Live Vehicle Data") {
         Text("Battery voltage · EXPERIMENTAL", style = MaterialTheme.typography.labelLarge)
+        val volts = state.batteryVolts
         Text(
-            text = state.batteryVolts?.let { String.format(Locale.US, "%.1f V", it) } ?: "— V",
+            text = volts?.let { String.format(Locale.US, "%.1f V", it) } ?: "— V",
             style = PulseShiftMonoLarge,
-            color = if (state.batteryVolts != null) MaterialTheme.colorScheme.primary
+            color = if (volts != null) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurfaceVariant
         )
+        val raw = state.voltageCandidateRaw
         Text(
-            text = when {
-                state.batteryVolts != null ->
-                    "Prediction only: CAN 0x303[1] / 10. Raw byte " +
-                        "0x" + state.voltageCandidateRaw!!.toString(16).uppercase().padStart(2, '0') +
-                        ". Compare with battery-terminal multimeter readings. NOT calibrated."
-                !connected -> "Connect to the ESP32 to compare with your battery multimeter."
-                !state.hasFreshRpmPacket -> "Waiting for a fresh BLE RPM/voltage notification."
-                !state.voltageProbeSupported ->
-                    "The installed ESP32 firmware has no voltage probe. A compatible firmware update is required."
-                else -> "Waiting for a fresh CAN 0x303 frame. No voltage available."
-            },
-            style = MaterialTheme.typography.bodySmall,
+            text = if (raw != null) "CAN 0x303 · Byte 1 · Raw 0x%02X".format(Locale.US, raw)
+                else when {
+                    !connected -> "Connect to the ESP32 for live voltage."
+                    state.hasFreshRpmPacket && !state.voltageProbeSupported ->
+                        "The installed firmware does not report this signal."
+                    else -> "Waiting for a supported, fresh CAN signal."
+                },
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
-        Text("Temperature", style = MaterialTheme.typography.labelLarge)
-        Text("— °C", style = PulseShiftMonoLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "Unavailable: no temperature signal has been identified and calibrated.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
+        if (raw != null) {
+            Text("Live · Uncalibrated estimate", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun ControllerHealthCard(state: LiveTelemetrySnapshot, connected: Boolean) {
+    SectionCard(title = "CAN & Controller") {
+        Text(if (connected) "BLE connected" else "BLE disconnected")
         LiveMetricRow("CAN frames received", state.receivedFrames?.toString() ?: "—")
-        LiveMetricRow("CAN traffic (last second)", state.trafficActive?.let { if (it) "Detected" else "No traffic" } ?: "—")
-        LiveMetricRow("RPM candidate raw byte", state.candidateRawByte?.let { "0x" + it.toString(16).uppercase().padStart(2, '0') } ?: "—")
-        LiveMetricRow("RPM candidate age", state.candidateAgeMs?.let { it.toString() + " ms" } ?: "—")
-        LiveMetricRow("ESP32 uptime", state.uptimeSeconds?.let { it.toString() + " s" } ?: "—")
-        LiveMetricRow("CAN frames missed", state.missedFrames?.toString() ?: "—")
-        LiveMetricRow("CAN FIFO overruns", state.fifoOverruns?.toString() ?: "—")
-        LiveMetricRow("CAN bus errors", state.busErrors?.toString() ?: "—")
-        LiveMetricRow("Frames saved this session", state.recordedThisSession?.toString() ?: "—")
-        LiveMetricRow("Recording active", state.recordingActive?.let { if (it) "Yes" else "No" } ?: "—")
-        LiveMetricRow("Prior capture preserved", state.capturePreserved?.let { if (it) "Yes" else "No" } ?: "—")
-        LiveMetricRow(
-            "LittleFS storage",
-            when {
-                state.storageMounted == null -> "—"
-                state.storageMounted == false -> "Unavailable"
-                state.storageFull == true -> "Full"
-                else -> "Mounted"
-            }
-        )
-        Spacer(Modifier.height(PulseShiftSpacing.SmallLabel))
-        Text(
-            "Voltage is an unverified prediction, not a warning/safety instrument. " +
-                "Temperature candidate 0x302[1] is archived and cannot yet be displayed in °C.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        LiveMetricRow("CAN traffic", state.trafficActive?.let { if (it) "Recent traffic" else "Idle" } ?: "—")
+        LiveMetricRow("CAN bus", state.canHealthy?.let { if (it) "Operational" else "Unavailable" } ?: "—")
+        LiveMetricRow("ESP32 uptime", state.uptimeSeconds?.let { "$it s" } ?: "—")
+    }
+}
+
+@Composable
+private fun CaptureStorageCard(state: LiveTelemetrySnapshot) {
+    SectionCard(title = "Recording & Storage") {
+        LiveMetricRow("Recording", state.recordingActive?.let { if (it) "Active" else "Stopped" } ?: "—")
+        LiveMetricRow("Session frames", state.recordedThisSession?.toString() ?: "—")
+        LiveMetricRow("Prior capture", state.capturePreserved?.let { if (it) "Preserved" else "None reported" } ?: "—")
+        LiveMetricRow("LittleFS", when {
+            state.storageMounted == null -> "—"
+            !state.storageMounted -> "Unavailable"
+            state.storageFull == true -> "Full"
+            else -> "Mounted"
+        })
     }
 }
 
@@ -645,18 +586,8 @@ private fun LiveMetricRow(label: String, value: String) {
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = value,
-            style = PulseShiftMonoSmall,
-            textAlign = TextAlign.End,
-            modifier = Modifier.weight(0.8f)
-        )
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.End)
     }
 }
 

@@ -7,6 +7,7 @@ import com.pulseshift.app.data.ble.ConfigSnapshotReassembler
 import com.pulseshift.app.data.ble.DiagnosticLogReassembler
 import com.pulseshift.app.data.ble.PulseShiftBleManager
 import com.pulseshift.app.data.ble.PulseShiftBleProtocol
+import com.pulseshift.app.data.ble.SignedOtaImage
 import com.pulseshift.app.data.local.OwnerCredentialManager
 import com.pulseshift.app.data.local.PulseShiftDataStore
 import com.pulseshift.app.data.repository.BlePulseShiftRepository
@@ -53,6 +54,9 @@ import org.mockito.kotlin.whenever
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import java.util.zip.CRC32
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -110,29 +114,57 @@ class BleAuthAndLightingRegressionTest {
         Dispatchers.resetMain()
     }
 
+    private val otaFixtureKey by lazy {
+        KeyPairGenerator.getInstance("EC").apply {
+            initialize(ECGenParameterSpec("secp256r1"))
+        }.generateKeyPair()
+    }
+
     private fun createRepository(): BlePulseShiftRepository {
         return BlePulseShiftRepository(
             bleManager = mockBleManager,
             dataStore = mockDataStore,
-            credentialManager = mockCredentialManager
+            credentialManager = mockCredentialManager,
+            validateOtaImage = { SignedOtaImage.validate(it, otaFixtureKey.public) }
         )
     }
 
     private fun otaPackage(): ByteArray {
-        val payload = ByteArray(65536).apply { this[0] = 0xE9.toByte() }
+        val payload = ByteArray(65_536)
+        ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+            .put(0, 0xE9.toByte()).putInt(32, 0xABCD5432.toInt())
+        val rawSignature = Signature.getInstance("SHA256withECDSAinP1363Format").run {
+            initSign(otaFixtureKey.private)
+            update(payload)
+            sign()
+        }
         val crc = CRC32().apply { update(payload) }
         val trailer = ByteBuffer.allocate(76).order(ByteOrder.LITTLE_ENDIAN)
-            .putInt(0x544F5350).put(1).put(0).putInt(crc.value.toInt()).putShort(64)
+            .putInt(0x544F5350).put(1).put(0).putInt(crc.value.toInt()).putShort(64).put(rawSignature)
         return payload + trailer.array()
     }
 
     private fun prepareOtaDevice() {
         connectedDeviceFlow.value = testDevice.copy(
             isConnected = true,
-            capabilities = DeviceCapabilities(hasConfigV2Support = true, supportsOtaUpdate = true, otaActiveSlot = 0)
+            capabilities = DeviceCapabilities(
+                hasConfigV2Support = true, supportsOtaUpdate = true, otaActiveSlot = 0, otaFlags = 0x06
+            )
         )
+        val rpmPacket = ByteArray(20).apply {
+            this[0] = 1
+            this[1] = 0x10 // CAN controller operational, inactive, recording stopped.
+            this[8] = 0xFF.toByte()
+            this[9] = 0xFF.toByte()
+            this[16] = 0xFF.toByte()
+            this[17] = 0xFF.toByte()
+        }
+        whenever(mockBleManager.rpmTelemetryState)
+            .thenAnswer { MutableStateFlow(PulseShiftBleProtocol.parseRpmTelemetry(rpmPacket)) }
         whenever(mockBleManager.currentMtu).thenReturn(MutableStateFlow(512))
     }
+
+    private val preflightStatus = byteArrayOf(0, 0, 0, 0, 0, 0, 2, 1)
 
     private fun otaAck(frame: ByteArray, payload: ByteArray = byteArrayOf()) {
         val sequence = (frame[2].toInt() and 0xff) or ((frame[3].toInt() and 0xff) shl 8)
@@ -151,6 +183,7 @@ class BleAuthAndLightingRegressionTest {
             val frame = invocation.getArgument<ByteArray>(0)
             when (frame[1]) {
                 PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN -> otaAck(frame, byteArrayOf(0, 0, 0, 0, 1, 11))
+                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS -> otaAck(frame, preflightStatus)
                 PulseShiftBleProtocol.V2_OPCODE_OTA_DATA -> dataStarted.complete(Unit)
                 PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT -> {
                     abortSent.complete(Unit)
@@ -186,6 +219,7 @@ class BleAuthAndLightingRegressionTest {
             val frame = invocation.getArgument<ByteArray>(0)
             when (frame[1]) {
                 PulseShiftBleProtocol.V2_OPCODE_OTA_BEGIN -> otaAck(frame, byteArrayOf(0, 0, 0, 0, 1, 11))
+                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS -> otaAck(frame, preflightStatus)
                 PulseShiftBleProtocol.V2_OPCODE_OTA_DATA -> dataStarted.complete(Unit)
                 PulseShiftBleProtocol.V2_OPCODE_OTA_ABORT -> abortFrame.complete(frame)
             }
@@ -237,7 +271,8 @@ class BleAuthAndLightingRegressionTest {
                 PulseShiftBleProtocol.V2_OPCODE_OTA_END -> endFrame.complete(frame)
                 PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS -> {
                     if (frame[4] == 0.toByte()) {
-                        otaAck(frame, byteArrayOf(0, 1, 0, 0, 0, 0, if (confirmed) 2 else 1, 1))
+                        otaAck(frame, if (connectedDeviceFlow.value?.capabilities?.otaActiveSlot == 0)
+                            preflightStatus else byteArrayOf(0, 1, 0, 0, 0, 0, if (confirmed) 2 else 1, 1))
                     } else {
                         val part = frame[6].toInt()
                         otaAck(frame, byteArrayOf(part.toByte()) + digest.copyOfRange(part * 8, part * 8 + 8))
@@ -255,7 +290,7 @@ class BleAuthAndLightingRegressionTest {
         doAnswer {
             val device = checkNotNull(connectedDeviceFlow.value)
             connectedDeviceFlow.value = device.copy(capabilities = device.capabilities.copy(
-                firmwareMajor = 2, firmwareMinor = 3, otaActiveSlot = 1, otaFlags = 0x04
+                firmwareMajor = 2, firmwareMinor = 3, otaActiveSlot = 1, otaFlags = 0x06
             ))
             repository.setAuthenticatedForTesting(true)
             null

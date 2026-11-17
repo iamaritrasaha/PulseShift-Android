@@ -17,6 +17,7 @@ class SettingsViewModel(
     private val repository: PulseShiftRepository
 ) : ViewModel() {
     val connectedDevice: StateFlow<BleDevice?> = repository.connectedDevice
+    val isAuthenticated = repository.isAuthenticated
     val otaUpdateState: StateFlow<OtaUpdateState> = repository.otaUpdateState
 
     val themeMode: StateFlow<Int> = dataStore.themeMode.stateIn(

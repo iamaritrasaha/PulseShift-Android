@@ -83,8 +83,10 @@ fun SettingsScreen(
     val dynamicColor by viewModel.dynamicColor.collectAsState()
     val autoReconnect by viewModel.autoReconnect.collectAsState()
     val connectedDevice by viewModel.connectedDevice.collectAsState()
+    val authenticated by viewModel.isAuthenticated.collectAsState()
     val otaState by viewModel.otaUpdateState.collectAsState()
 
+    var showOtaPreflight by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -235,31 +237,28 @@ fun SettingsScreen(
                                 Text("Running Firmware", style = MaterialTheme.typography.bodyLarge)
                                 val fwVer = connectedDevice?.firmwareVersion ?: "Not connected"
                                 val slot = connectedDevice?.capabilities?.otaActiveSlot
-                                val slotStr = if (slot != null && slot != 0xFF) "Slot $slot (app$slot)" else "Single Slot"
+                                val slotStr = if (slot != null && slot in 0..1) "Active app$slot · target app${1 - slot}" else "OTA slots unavailable"
                                 Text("$fwVer • $slotStr", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             }
                             Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         }
 
-                        val canOta = connectedDevice?.capabilities?.supportsOtaUpdate == true ||
-                                (connectedDevice?.capabilities?.firmwareMajor ?: 0) >= 2
-                        val isConnected = connectedDevice?.isConnected == true
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        val caps = connectedDevice?.capabilities
+                        val canOta = connectedDevice?.isConnected == true && caps?.supportsOtaUpdate == true &&
+                            caps.hasDualOtaSlots && caps.otaActiveSlot in 0..1
+                        Text(
+                            when {
+                                !canOta -> "Connect to a controller with dual-slot OTA support."
+                                !authenticated -> "Authenticate as the controller owner to update."
+                                else -> "Choose a signed PulseShift firmware package."
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Button(
+                            onClick = { showOtaPreflight = true },
+                            enabled = canOta && authenticated && otaState is OtaUpdateState.Idle
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Over-The-Air Update", style = MaterialTheme.typography.bodyMedium)
-                                Text("Dual-slot fail-safe BLE transfer with SHA-256 verification", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Button(
-                                onClick = { filePicker.launch("*/*") },
-                                enabled = isConnected && canOta && otaState is OtaUpdateState.Idle
-                            ) {
-                                Text("Flash .bin")
-                            }
+                            Text("Select signed firmware")
                         }
                     }
                 }
@@ -369,6 +368,31 @@ fun SettingsScreen(
             )
         }
 
+        if (showOtaPreflight) {
+            AlertDialog(
+                onDismissRequest = { showOtaPreflight = false },
+                title = { Text("Bench update only") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("Park, switch the engine and ignition off, and use stable bench power. Keep USB recovery available.")
+                        Text("Physical OTA and rollback are unverified. Interrupted power may require recovery. Keep the ESP32 and phone powered until verification finishes.")
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showOtaPreflight = false
+                        filePicker.launch("*/*")
+                    }) { Text("Parked · Select file") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showOtaPreflight = false }) { Text("Cancel") }
+                }
+            )
+        }
+
         if (otaState !is OtaUpdateState.Idle) {
             AlertDialog(
                 onDismissRequest = {
@@ -405,7 +429,7 @@ fun SettingsScreen(
                 text = {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
                     ) {
                         when (val state = otaState) {
                             is OtaUpdateState.Validating -> {
@@ -416,7 +440,7 @@ fun SettingsScreen(
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                             is OtaUpdateState.Transferring -> {
-                                Text("Sending chunked binary packets over BLE. Do not power off motorcycle or phone.")
+                                Text("Transferring to app${state.currentSlot}. Keep the ESP32 and phone powered.")
                                 LinearProgressIndicator(
                                     progress = { state.progressPercent / 100.0f },
                                     modifier = Modifier.fillMaxWidth()

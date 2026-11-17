@@ -233,6 +233,17 @@ class PulseShiftNavigationTest {
         }
     }
 
+    @Test
+    fun experimentalBatteryCardShowsAnUnavailableValueOfflineAndKeepsItsLabelReadable() {
+        launch().use {
+            val batteryLabel = "Battery voltage · EXPERIMENTAL"
+            compose.onNodeWithText(batteryLabel).assertIsDisplayed()
+            assertTextFits(batteryLabel)
+            compose.onNodeWithText("— V").assertIsDisplayed()
+            assertTextFits("— V")
+        }
+    }
+
     private fun assertTextFits(text: String, singleLine: Boolean = false) {
         val node = compose.onNodeWithText(text, useUnmergedTree = true)
         node.assertIsDisplayed()

@@ -46,6 +46,7 @@ data class DeviceCapabilities(
     val supportsRangeDiscovery: Boolean = false,
     val supportsOtaUpdate: Boolean = false
 ) {
+    val hasDualOtaSlots: Boolean get() = (otaFlags and 0x02) != 0
     val supportsOtaImageDigest: Boolean get() = (otaFlags and 0x04) != 0
     val firmwareVersion: String
         get() = if (firmwareMajor > 0) "$firmwareMajor.$firmwareMinor.$firmwarePatch" else "unknown"

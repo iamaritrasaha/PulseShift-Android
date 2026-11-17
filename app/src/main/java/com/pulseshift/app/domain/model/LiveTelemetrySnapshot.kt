@@ -5,7 +5,6 @@ package com.pulseshift.app.domain.model
  * health at 1 Hz). The optional paired firmware probe writes CAN 0x303[1]
  * into RPM bytes 18-19 with an explicit freshness marker. Legacy firmware
  * continues to work; this experimental prediction is NOT a verified voltmeter.
- * Temperature remains unavailable; no temperature value is invented.
  */
 data class LiveTelemetrySnapshot(
     val receivedFrames: Long?,
@@ -14,6 +13,7 @@ data class LiveTelemetrySnapshot(
     val candidateAgeMs: Int?,
     val provisionalRpm: Int?,
     val trafficActive: Boolean?,
+    val canHealthy: Boolean?,
     val missedFrames: Long?,
     val fifoOverruns: Long?,
     val busErrors: Long?,
@@ -28,8 +28,7 @@ data class LiveTelemetrySnapshot(
     // A null sensor reading means *not available*, never 0 V / 0 degrees.
     val batteryVolts: Double? = null,
     val voltageCandidateRaw: Int? = null,
-    val voltageProbeSupported: Boolean = false,
-    val temperatureCelsius: Double? = null
+    val voltageProbeSupported: Boolean = false
 ) {
     val hasLiveData: Boolean get() = hasFreshRpmPacket || hasFreshHealthPacket
 
@@ -41,7 +40,7 @@ data class LiveTelemetrySnapshot(
             telemetry: RpmTelemetryState?,
             health: CanHealthState?,
             connected: Boolean,
-            nowMs: Long = System.currentTimeMillis()
+            nowMs: Long = telemetryClockMs()
         ): LiveTelemetrySnapshot {
             fun isCurrent(receivedAt: Long, maxAgeMs: Long): Boolean =
                 connected && nowMs >= receivedAt && nowMs - receivedAt <= maxAgeMs
@@ -59,6 +58,7 @@ data class LiveTelemetrySnapshot(
                 candidateAgeMs = rpm?.rpmSampleAgeMs?.takeIf { candidateValid },
                 provisionalRpm = rpm?.provisionalRpm?.takeIf { candidateValid },
                 trafficActive = rpm?.statusFlags?.isRecentCanTrafficDetected,
+                canHealthy = rpm?.statusFlags?.isCanHealthy,
                 missedFrames = can?.driverMissedFrames,
                 fifoOverruns = can?.hardwareFifoOverruns,
                 busErrors = can?.canBusErrors,

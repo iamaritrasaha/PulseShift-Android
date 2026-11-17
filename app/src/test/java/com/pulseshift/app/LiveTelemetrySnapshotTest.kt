@@ -2,6 +2,7 @@ package com.pulseshift.app
 
 import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.HealthFlags
+import com.pulseshift.app.domain.model.DiagnosticsReport
 import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
 import com.pulseshift.app.domain.model.RpmStatusFlags
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -61,6 +62,7 @@ class LiveTelemetrySnapshotTest {
         )
         assertTrue(snapshot.hasLiveData)
         assertEquals(1234L, snapshot.receivedFrames)
+        assertEquals(true, snapshot.canHealthy)
         assertEquals(66L, snapshot.uptimeSeconds)
         assertEquals(122, snapshot.candidateRawByte)
         assertEquals(42, snapshot.candidateAgeMs)
@@ -83,7 +85,6 @@ class LiveTelemetrySnapshotTest {
         )
         assertEquals(0x7A, snapshot.candidateRawByte)
         assertNull(snapshot.batteryVolts)
-        assertNull(snapshot.temperatureCelsius)
     }
 
     @Test
@@ -127,6 +128,7 @@ class LiveTelemetrySnapshotTest {
         )
         assertTrue(snapshot.hasFreshRpmPacket)
         assertEquals(1234L, snapshot.receivedFrames)
+        assertEquals(true, snapshot.canHealthy)
         assertNull(snapshot.candidateRawByte)
         assertNull(snapshot.provisionalRpm)
         assertNull(snapshot.candidateAgeMs)
@@ -141,7 +143,6 @@ class LiveTelemetrySnapshotTest {
         assertEquals(true, state.voltageProbeSupported)
         assertEquals(0x7A, state.voltageCandidateRaw)
         assertEquals(12.2, state.batteryVolts!!, 0.00001)
-        assertNull(state.temperatureCelsius)
     }
 
     @Test
@@ -169,6 +170,18 @@ class LiveTelemetrySnapshotTest {
             rpm(10_000, reserved = 0xA57A), health(10_000), true, nowMs = 12_100
         )
         assertNull(expired.batteryVolts)
+    }
+
+    @Test
+    fun diagnosticSnapshotDistinguishesMissingTlvAndStaleBytesFromRealZero() {
+        fun report(vararg tlv: Int): DiagnosticsReport {
+            val body = byteArrayOf(1, 0, 0, 0, 0) + tlv.map(Int::toByte).toByteArray()
+            val crc = java.util.zip.CRC32().apply { update(body) }.value
+            val trailer = ByteArray(4) { (crc ushr (it * 8)).toByte() }
+            return DiagnosticsReport.parse(2, body + trailer)!!
+        }
+        assertNull(report().experimentalCanBytes)
+        assertEquals(listOf(0, null, 159, null), report(0x4A, 5, 5, 0, 88, 159, 2).experimentalCanBytes)
     }
 
     @Test
