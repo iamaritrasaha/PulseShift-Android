@@ -208,6 +208,7 @@ class PulseShiftNavigationTest {
             assertTextFits("Dash")
             assertTextFits("Lights")
             assertTextFits("Diags")
+            assertTextFits("Presets", singleLine = true)
             selectTab("Presets")
             assertTextFits("Presets Library")
             compose.onNodeWithText("New").performClick()
@@ -216,6 +217,13 @@ class PulseShiftNavigationTest {
             compose.onNodeWithContentDescription("Presets").assertIsSelected()
             selectTab("Diagnostics")
             assertTextFits("Diagnostics & Health")
+            assertTextFits("Health", singleLine = true)
+            assertTextFits("Capture", singleLine = true)
+            compose.onNodeWithText("Event Logs").performClick()
+            val logsList = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+            logsList.performScrollToNode(hasText("Fetch Historical"))
+            compose.onNodeWithText("Fetch Historical").performScrollTo().assertIsDisplayed()
+            assertTextFits("Fetch Historical")
             selectTab("Dashboard")
             compose.onNodeWithContentDescription("Bluetooth devices").performClick()
             assertTextFits("Hardware & Bluetooth")
@@ -224,7 +232,7 @@ class PulseShiftNavigationTest {
         }
     }
 
-    private fun assertTextFits(text: String) {
+    private fun assertTextFits(text: String, singleLine: Boolean = false) {
         val node = compose.onNodeWithText(text, useUnmergedTree = true)
         node.assertIsDisplayed()
         val layouts = mutableListOf<TextLayoutResult>()
@@ -238,6 +246,7 @@ class PulseShiftNavigationTest {
             val maxWidth = lines.maxOf { layout.getLineRight(it) - layout.getLineLeft(it) }
             val fits = maxWidth <= layout.size.width + 1f &&
                 layout.multiParagraph.height <= layout.size.height + 1f &&
+                (!singleLine || layout.lineCount == 1) &&
                 lines.none(layout::isLineEllipsized) &&
                 layout.getLineEnd(lines.last) == text.length
             assertTrue("Text does not fit: $text (${layout.size}, widest line: $maxWidth px)", fits)

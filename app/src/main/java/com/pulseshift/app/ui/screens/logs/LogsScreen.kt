@@ -10,12 +10,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -160,21 +164,19 @@ fun LogsScreen(
             contentColor = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = PulseShiftSpacing.ScreenHorizontal)
         ) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = { Text("Health") }
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("Event Logs") }
-            )
-            Tab(
-                selected = selectedTab == 2,
-                onClick = { selectedTab = 2 },
-                text = { Text("Capture") }
-            )
+            listOf("Health", "Event Logs", "Capture").forEachIndexed { index, label ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.height(PulseShiftSpacing.SmallGap))
@@ -613,6 +615,7 @@ fun DiagnosticsOverviewTab(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EventLogsTab(
     logs: List<DiagnosticLogMessage>,
@@ -641,221 +644,211 @@ fun EventLogsTab(
         else -> nextHistoricalOffset
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = PulseShiftSpacing.ScreenHorizontal, vertical = PulseShiftSpacing.SmallGap),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().imePadding(),
+        contentPadding = PaddingValues(
+            start = PulseShiftSpacing.ScreenHorizontal,
+            end = PulseShiftSpacing.ScreenHorizontal,
+            top = PulseShiftSpacing.SmallGap,
+            bottom = PulseShiftSpacing.BottomScrollPadding
+        ),
         verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
     ) {
-        if (showSearchField) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = onSearchQueryChange,
-                placeholder = { Text("Search message text or ID...") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = PulseShiftShapeTokens.Control,
-                singleLine = true,
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { onSearchQueryChange("") }) {
-                            Icon(Icons.Rounded.Cancel, contentDescription = "Clear search")
-                        }
-                    }
-                }
-            )
-        }
-
-        // Toolbar: Filter Chips on the left, Search/Export/Clear Actions on the right
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Severity Filter Chips
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SeverityChip("All", selectedSeverity == null) {
-                    onSeverityFilterChange(null)
-                }
-
-                SeverityChip("Info", selectedSeverity == LogSeverity.INFO, color = MaterialTheme.colorScheme.primary) {
-                    onSeverityFilterChange(LogSeverity.INFO)
-                }
-
-                SeverityChip("Warn", selectedSeverity == LogSeverity.WARNING, color = Color(0xFFFFB74D)) {
-                    onSeverityFilterChange(LogSeverity.WARNING)
-                }
-
-                SeverityChip("Error", selectedSeverity == LogSeverity.ERROR, color = MaterialTheme.colorScheme.error) {
-                    onSeverityFilterChange(LogSeverity.ERROR)
-                }
-            }
-
-            // Quick actions
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onToggleSearch,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.Search,
-                        contentDescription = "Search Logs",
-                        tint = if (showSearchField) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Box {
-                    IconButton(
-                        onClick = onOpenExportMenu,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            Icons.Rounded.Share,
-                            contentDescription = "Export Logs",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showExportMenu,
-                        onDismissRequest = onDismissExportMenu
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Copy Text to Clipboard") },
-                            onClick = onExportCopy,
-                            leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }
-                        )
-
-                        DropdownMenuItem(
-                            text = { Text("Share as Text File") },
-                            onClick = onExportFile,
-                            leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }
-                        )
-
-                        DropdownMenuItem(
-                            text = { Text("Share as CSV") },
-                            onClick = onExportCsv,
-                            leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null) }
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = onClearLogs,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.ClearAll,
-                        contentDescription = "Clear Logs",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-
-        // Historical Log Pagination Card
-        Card(
-            shape = PulseShiftShapeTokens.Card,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PulseShiftSpacing.CardPadding),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Flash Diagnostic Log Retrieval", style = MaterialTheme.typography.titleSmall)
-                    when (loadingState) {
-                        is HistoricalLogLoadingState.Idle -> {
-                            Text("Load historical log pages from ESP32 flash", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        is HistoricalLogLoadingState.Loading -> {
-                            Text("Fetching page at offset ${loadingState.requestedOffset} bytes...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        }
-                        is HistoricalLogLoadingState.PageLoaded -> {
-                            if (loadingState.isFinished) {
-                                Text("All historical flash log pages retrieved (End of log)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                            } else {
-                                Text("Next available page: ${loadingState.nextOffset} bytes offset", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
+                if (showSearchField) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        placeholder = { Text("Search message text or ID...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = PulseShiftShapeTokens.Control,
+                        singleLine = true,
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { onSearchQueryChange("") }) {
+                                    Icon(Icons.Rounded.Cancel, contentDescription = "Clear search")
+                                }
                             }
                         }
-                        is HistoricalLogLoadingState.Error -> {
-                            Text("Retrieval error: ${loadingState.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
+                    )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
-                    if (loadingState is HistoricalLogLoadingState.Loading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        OutlinedButton(
-                            onClick = onCancelRetrieval,
-                            shape = PulseShiftShapeTokens.Control
+                // Keep filters and tools visible when scaling requires separate rows.
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap),
+                    verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
+                        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro)
+                    ) {
+                        SeverityChip("All", selectedSeverity == null) {
+                            onSeverityFilterChange(null)
+                        }
+
+                        SeverityChip("Info", selectedSeverity == LogSeverity.INFO, color = MaterialTheme.colorScheme.primary) {
+                            onSeverityFilterChange(LogSeverity.INFO)
+                        }
+
+                        SeverityChip("Warn", selectedSeverity == LogSeverity.WARNING, color = Color(0xFFFFB74D)) {
+                            onSeverityFilterChange(LogSeverity.WARNING)
+                        }
+
+                        SeverityChip("Error", selectedSeverity == LogSeverity.ERROR, color = MaterialTheme.colorScheme.error) {
+                            onSeverityFilterChange(LogSeverity.ERROR)
+                        }
+                    }
+
+                    // Quick actions
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = onToggleSearch,
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            Text("Cancel", style = MaterialTheme.typography.labelSmall)
+                            Icon(
+                                Icons.Rounded.Search,
+                                contentDescription = "Search Logs",
+                                tint = if (showSearchField) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
-                    } else {
-                        val isFinished = (loadingState as? HistoricalLogLoadingState.PageLoaded)?.isFinished ?: false
-                        if (!isFinished) {
-                            FilledTonalButton(
-                                onClick = { onRequestPage(nextOffset) },
-                                shape = PulseShiftShapeTokens.Control
+
+                        Box {
+                            IconButton(
+                                onClick = onOpenExportMenu,
+                                modifier = Modifier.size(36.dp)
                             ) {
-                                Text(if (nextOffset == 0L) "Fetch Historical" else "Load Next Page", style = MaterialTheme.typography.labelSmall)
+                                Icon(
+                                    Icons.Rounded.Share,
+                                    contentDescription = "Export Logs",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showExportMenu,
+                                onDismissRequest = onDismissExportMenu
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Copy Text to Clipboard") },
+                                    onClick = onExportCopy,
+                                    leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Share as Text File") },
+                                    onClick = onExportFile,
+                                    leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Share as CSV") },
+                                    onClick = onExportCsv,
+                                    leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null) }
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onClearLogs,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.ClearAll,
+                                contentDescription = "Clear Logs",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Historical Log Pagination Card
+                Card(
+                    shape = PulseShiftShapeTokens.Card,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(PulseShiftSpacing.CardPadding),
+                        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)
+                    ) {
+                        Column {
+                            Text("Flash Diagnostic Log Retrieval", style = MaterialTheme.typography.titleSmall)
+                            when (loadingState) {
+                                is HistoricalLogLoadingState.Idle -> {
+                                    Text("Load historical log pages from ESP32 flash", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                is HistoricalLogLoadingState.Loading -> {
+                                    Text("Fetching page at offset ${loadingState.requestedOffset} bytes...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                }
+                                is HistoricalLogLoadingState.PageLoaded -> {
+                                    if (loadingState.isFinished) {
+                                        Text("All historical flash log pages retrieved (End of log)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                    } else {
+                                        Text("Next available page: ${loadingState.nextOffset} bytes offset", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                is HistoricalLogLoadingState.Error -> {
+                                    Text("Retrieval error: ${loadingState.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)) {
+                            if (loadingState is HistoricalLogLoadingState.Loading) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                OutlinedButton(
+                                    onClick = onCancelRetrieval,
+                                    shape = PulseShiftShapeTokens.Control
+                                ) {
+                                    Text("Cancel", style = MaterialTheme.typography.labelSmall)
+                                }
+                            } else {
+                                val isFinished = (loadingState as? HistoricalLogLoadingState.PageLoaded)?.isFinished ?: false
+                                if (!isFinished) {
+                                    FilledTonalButton(
+                                        onClick = { onRequestPage(nextOffset) },
+                                        shape = PulseShiftShapeTokens.Control
+                                    ) {
+                                        Text(if (nextOffset == 0L) "Fetch Historical" else "Load Next Page", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
 
-        Text(
-            text = "${logs.size} Events Displayed",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        if (logs.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(PulseShiftSpacing.ScreenHorizontal),
-                contentAlignment = Alignment.Center
-            ) {
                 Text(
-                    text = "No diagnostic events match current filter",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "${logs.size} Events Displayed",
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        if (logs.isEmpty()) {
+            item {
+                Text(
+                    text = "No diagnostic events match current filter",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = PulseShiftSpacing.ScreenVertical)
+                )
+            }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = PulseShiftSpacing.ScreenHorizontal,
-                    end = PulseShiftSpacing.ScreenHorizontal,
-                    top = PulseShiftSpacing.SmallGap,
-                    bottom = PulseShiftSpacing.BottomScrollPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap)
-            ) {
-                items(logs, key = { it.id }) { item ->
-                    LogMessageCard(item = item, dateFormat = dateFormat)
-                }
+            items(logs, key = { it.id }) { item ->
+                LogMessageCard(item = item, dateFormat = dateFormat)
             }
         }
     }
 }
+
 
 @Composable
 fun SeverityChip(

@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -55,6 +56,7 @@ fun PulseShiftBottomBar(
     onNavigate: (Screen) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val largeText = LocalDensity.current.fontScale >= 1.5f
     Surface(
         shape = RectangleShape,
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -102,7 +104,7 @@ fun PulseShiftBottomBar(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(if (largeText && screen == Screen.Presets) 1.25f else 1f)
                             .heightIn(min = PulseShiftSpacing.MinTouchTarget)
                             .clip(RoundedCornerShape(8.dp))
                             .selectable(
