@@ -14,6 +14,7 @@ import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.data.repository.PulseShiftRepository
+import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.ui.navigation.PulseShiftNavGraph
 import com.pulseshift.app.ui.screens.devices.DevicesViewModel
 import com.pulseshift.app.ui.screens.home.HomeViewModel
@@ -39,6 +40,11 @@ class ConnectionNavigationTest {
         val repository = object : PulseShiftRepository by app.repository {
             override val connectionState = MutableStateFlow(BleConnectionState.DISCONNECTED)
             override val isAuthenticated = MutableStateFlow(false)
+            override val otaUpdateState = MutableStateFlow<OtaUpdateState>(OtaUpdateState.Idle)
+            override suspend fun cancelOtaUpdate(): Boolean {
+                otaUpdateState.value = OtaUpdateState.Idle
+                return true
+            }
         }
 
         compose.setContent {
@@ -74,7 +80,21 @@ class ConnectionNavigationTest {
         compose.runOnIdle {
             repository.connectionState.value = BleConnectionState.DISCONNECTED
             repository.isAuthenticated.value = false
+            repository.otaUpdateState.value = OtaUpdateState.Reconnecting(0)
         }
+        compose.onNodeWithText("Reconnecting over Bluetooth").assertIsDisplayed()
+        compose.runOnIdle {
+            repository.connectionState.value = BleConnectionState.RECEIVING_TELEMETRY
+            repository.isAuthenticated.value = true
+            repository.otaUpdateState.value = OtaUpdateState.Confirming(0)
+        }
+        compose.onNodeWithText("Checking the running firmware").assertIsDisplayed()
+        compose.runOnIdle {
+            repository.otaUpdateState.value = OtaUpdateState.Failed("The controller returned to the original slot.")
+            repository.connectionState.value = BleConnectionState.DISCONNECTED
+            repository.isAuthenticated.value = false
+        }
+        compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Settings").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithContentDescription("Diagnostics").assertIsSelected()
