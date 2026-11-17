@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,7 +23,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.res.painterResource
 import com.pulseshift.app.R
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothConnected
@@ -42,8 +42,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,6 +58,7 @@ import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.ui.theme.PulseShiftRadius
 import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.components.PulseShiftDetailTopBar
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,16 +78,9 @@ fun DevicesScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
+            PulseShiftDetailTopBar(
                 title = { Text("Hardware & Bluetooth", style = MaterialTheme.typography.titleLarge) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                onBack = onNavigateBack,
                 actions = {
                     if (connectionState == BleConnectionState.SCANNING) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
@@ -100,8 +92,7 @@ fun DevicesScreen(
                             Icon(Icons.Rounded.Refresh, contentDescription = "Scan for ESP32")
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                }
             )
         }
     ) { innerPadding ->
@@ -383,17 +374,17 @@ fun OwnerEnrollmentCard(
                 Button(
                     onClick = { confirmEnrollment = true },
                     shape = PulseShiftShapeTokens.Control,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) { Text("Enroll as Owner") }
                 OutlinedButton(
                     onClick = onAuthenticate,
                     shape = PulseShiftShapeTokens.Control,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) { Text("Re-authenticate") }
                 OutlinedButton(
                     onClick = { confirmClearKey = true },
                     shape = PulseShiftShapeTokens.Control,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) { Text("Reset Key") }
             }
 
@@ -527,7 +518,7 @@ fun DiscoveredDeviceItem(
             Button(
                 onClick = onConnect,
                 shape = PulseShiftShapeTokens.Control,
-                modifier = Modifier.height(38.dp)
+                modifier = Modifier.heightIn(min = 38.dp)
             ) {
                 Text("Connect")
             }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,7 +29,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import com.pulseshift.app.R
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
@@ -42,17 +43,20 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,6 +69,7 @@ import com.pulseshift.app.ui.theme.HardwareRedError
 import com.pulseshift.app.ui.theme.HardwareTealActive
 import com.pulseshift.app.ui.theme.PulseShiftMonoSmall
 import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
+import com.pulseshift.app.ui.components.PulseShiftDetailTopBar
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -92,9 +97,12 @@ fun TerminalScreen(
     val pending by viewModel.pendingConfirmation.collectAsState()
     val device by viewModel.device.collectAsState()
 
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     val quickCommands = listOf(
         "HELP",
@@ -134,7 +142,7 @@ fun TerminalScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            PulseShiftDetailTopBar(
                 title = {
                     Column {
                         Text("Hardware Terminal", style = MaterialTheme.typography.titleMedium)
@@ -145,12 +153,12 @@ fun TerminalScreen(
                         )
                     }
                 },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+                onBack = {
+                    if (imeVisible) {
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                    } else {
+                        onNavigateBack()
                     }
                 },
                 actions = {
@@ -273,7 +281,7 @@ fun TerminalScreen(
                             value = input,
                             onValueChange = { input = it },
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("Enter command (or tap chip above)", style = PulseShiftMonoSmall) },
+                            placeholder = { Text("Enter command", style = PulseShiftMonoSmall) },
                             textStyle = PulseShiftMonoSmall,
                             singleLine = true,
                             enabled = !isBusy,

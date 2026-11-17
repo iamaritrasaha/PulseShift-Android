@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.domain.model.RgbColor
@@ -95,7 +96,8 @@ fun LedStripPreview(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(48.dp)
+                            .weight(1f)
+                            .height(48.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
@@ -159,7 +161,7 @@ fun LedStripPreview(
                         Text(
                             text = "${index + 1}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isPowerOn) Color.Black.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.3f)
+                            color = if (animatedColor.luminance() > 0.18f) Color.Black else Color.White
                         )
                     }
                 }

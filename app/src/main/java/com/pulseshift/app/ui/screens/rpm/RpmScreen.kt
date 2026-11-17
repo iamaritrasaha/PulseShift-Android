@@ -20,7 +20,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import com.pulseshift.app.R
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -43,8 +42,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,6 +50,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +64,7 @@ import com.pulseshift.app.domain.model.ShiftLightConfig
 import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
 import com.pulseshift.app.ui.theme.PulseShiftRadius
 import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.components.PulseShiftDetailTopBar
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import java.util.Locale
 
@@ -87,12 +86,12 @@ fun RpmScreen(
     val config by viewModel.shiftLightConfig.collectAsState()
     val hasUnsavedChanges by viewModel.hasUnsavedChanges.collectAsState()
 
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
+            PulseShiftDetailTopBar(
                 title = {
                     Column {
                         Text("RPM & Calibration", style = MaterialTheme.typography.titleMedium)
@@ -103,14 +102,7 @@ fun RpmScreen(
                         )
                     }
                 },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                onBack = onNavigateBack,
                 actions = {
                     if (hasUnsavedChanges) {
                         FilledTonalButton(
@@ -121,8 +113,7 @@ fun RpmScreen(
                             Text("Save to ESP32", style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                }
             )
         }
     ) { innerPadding ->

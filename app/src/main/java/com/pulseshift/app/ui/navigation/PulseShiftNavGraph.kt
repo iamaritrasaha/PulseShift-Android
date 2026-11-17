@@ -1,9 +1,15 @@
 package com.pulseshift.app.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -12,10 +18,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -44,7 +51,7 @@ import com.pulseshift.app.ui.screens.terminal.TerminalViewModel
 @Composable
 fun PulseShiftNavGraph(
     navController: NavHostController = rememberNavController(),
-    startDestination: String = Screen.Home.route,
+    showOnboarding: Boolean = false,
     homeViewModel: HomeViewModel,
     lightingViewModel: LightingViewModel,
     rpmViewModel: RpmViewModel,
@@ -55,61 +62,51 @@ fun PulseShiftNavGraph(
     terminalViewModel: TerminalViewModel,
     onCompleteOnboarding: () -> Unit
 ) {
+    // Keep the graph stable when DataStore emits completion and when Android restores this task.
+    val startDestination = rememberSaveable {
+        if (showOnboarding) Screen.Onboarding.route else Screen.Home.route
+    }
+    val completeOnboarding by rememberUpdatedState(onCompleteOnboarding)
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     val connectionState by homeViewModel.connectionState.collectAsState()
     val isAuthenticated by homeViewModel.isAuthenticated.collectAsState()
-    val connectedDevice by homeViewModel.connectedDevice.collectAsState()
 
-    val isPrimaryScreen = currentRoute in Screen.bottomNavItems.map { it.route }
+    val isTab = Screen.isBottomTab(currentRoute)
 
     Scaffold(
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            if (isPrimaryScreen) {
+            if (isTab) {
                 PulseShiftTopBar(
                     connectionState = connectionState,
                     isAuthenticated = isAuthenticated,
-                    deviceName = connectedDevice?.name,
-                    onNavigateToDevices = { navController.navigate(Screen.Devices.route) },
-                    onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                    onNavigateToDashboard = { navController.selectTab(Screen.Home) },
+                    onNavigateToDevices = { navController.openDetail(Screen.Devices) },
+                    onNavigateToTerminal = { navController.openDetail(Screen.Terminal) },
+                    onNavigateToSettings = { navController.openDetail(Screen.Settings) }
                 )
             }
         },
         bottomBar = {
-            if (isPrimaryScreen) {
+            if (currentRoute != null && currentRoute != Screen.Onboarding.route) {
                 PulseShiftBottomBar(
                     screens = Screen.bottomNavItems,
                     currentRoute = currentRoute,
-                    onNavigate = { screen ->
-                        navController.navigate(screen.route) {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
+                    onNavigate = navController::selectTab
                 )
             }
         }
     ) { innerPadding ->
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding()
-                ),
+            modifier = Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding),
             contentAlignment = Alignment.TopCenter
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .widthIn(max = 760.dp),
+                modifier = Modifier.widthIn(max = 760.dp).fillMaxSize(),
                 contentAlignment = Alignment.TopCenter
             ) {
                 NavHost(
@@ -130,16 +127,10 @@ fun PulseShiftNavGraph(
                     composable(Screen.Onboarding.route) {
                         OnboardingScreen(
                             onConnectDevice = {
-                                onCompleteOnboarding()
-                                navController.navigate(Screen.Devices.route) {
-                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
-                                }
+                                navController.finishWelcome(connectDevice = true, onComplete = completeOnboarding)
                             },
                             onContinueToHome = {
-                                onCompleteOnboarding()
-                                navController.navigate(Screen.Home.route) {
-                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
-                                }
+                                navController.finishWelcome(connectDevice = false, onComplete = completeOnboarding)
                             }
                         )
                     }
@@ -147,82 +138,106 @@ fun PulseShiftNavGraph(
                     composable(Screen.Home.route) {
                         HomeScreen(
                             viewModel = homeViewModel,
-                            onNavigateToLighting = {
-                                navController.navigate(Screen.Lighting.route) {
-                                    launchSingleTop = true
-                                }
-                            },
-                            onNavigateToSettings = { navController.navigate(Screen.Settings.route) { launchSingleTop = true } },
-                            onNavigateToDevices = { navController.navigate(Screen.Devices.route) { launchSingleTop = true } },
-                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) { launchSingleTop = true } },
-                            onNavigateToPresets = { navController.navigate(Screen.Presets.route) { launchSingleTop = true } },
-                            onNavigateToRpm = { navController.navigate(Screen.Rpm.route) { launchSingleTop = true } }
+                            onNavigateToLighting = { navController.selectTab(Screen.Lighting) },
+                            onNavigateToSettings = { navController.openDetail(Screen.Settings) },
+                            onNavigateToDevices = { navController.openDetail(Screen.Devices) },
+                            onNavigateToTerminal = { navController.openDetail(Screen.Terminal) },
+                            onNavigateToPresets = { navController.selectTab(Screen.Presets) },
+                            onNavigateToRpm = { navController.openDetail(Screen.Rpm) }
                         )
                     }
 
                     composable(Screen.Lighting.route) {
                         LightingScreen(
                             viewModel = lightingViewModel,
-                            onNavigateToPresets = {
-                                navController.navigate(Screen.Presets.route) {
-                                    launchSingleTop = true
-                                }
-                            },
-                            onNavigateBack = {
-                                navController.navigate(Screen.Home.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
+                            onNavigateToPresets = { navController.selectTab(Screen.Presets) },
+                            onNavigateBack = { navController.selectTab(Screen.Home) }
                         )
                     }
 
                     composable(Screen.Rpm.route) {
                         RpmScreen(
                             viewModel = rpmViewModel,
-                            onNavigateBack = { navController.popBackStack() }
+                            onNavigateBack = { navController.closeDetail(Screen.Rpm) }
                         )
                     }
 
                     composable(Screen.Diagnostics.route) {
                         LogsScreen(
                             viewModel = logsViewModel,
-                            onNavigateToTerminal = { navController.navigate(Screen.Terminal.route) }
+                            onNavigateToTerminal = { navController.openDetail(Screen.Terminal) }
                         )
                     }
 
                     composable(Screen.Presets.route) {
-                        PresetsScreen(
-                            viewModel = presetsViewModel,
-                            onNavigateBack = { navController.popBackStack() }
-                        )
+                        PresetsScreen(viewModel = presetsViewModel)
                     }
 
                     composable(Screen.Terminal.route) {
                         TerminalScreen(
                             viewModel = terminalViewModel,
-                            onNavigateBack = { navController.popBackStack() }
+                            onNavigateBack = { navController.closeDetail(Screen.Terminal) }
                         )
                     }
 
                     composable(Screen.Devices.route) {
                         DevicesScreen(
                             viewModel = devicesViewModel,
-                            onNavigateBack = { navController.popBackStack() }
+                            onNavigateBack = { navController.closeDetail(Screen.Devices) }
                         )
                     }
 
                     composable(Screen.Settings.route) {
                         SettingsScreen(
                             viewModel = settingsViewModel,
-                            onNavigateBack = { navController.popBackStack() }
+                            onNavigateBack = { navController.closeDetail(Screen.Settings) }
                         )
                     }
+                }
+
+                // Tab Back saves that tab's state. NavHost handles system Back on detail screens.
+                BackHandler(enabled = isTab && currentRoute != Screen.Home.route) {
+                    navController.selectTab(Screen.Home)
                 }
             }
         }
     }
+}
+
+private fun NavHostController.finishWelcome(connectDevice: Boolean, onComplete: () -> Unit) {
+    if (currentDestination?.route != Screen.Onboarding.route) return
+    navigate(Screen.Home.route) {
+        popUpTo(Screen.Onboarding.route) { inclusive = true }
+        launchSingleTop = true
+    }
+    if (connectDevice) openDetail(Screen.Devices)
+    onComplete()
+}
+
+private fun NavHostController.selectTab(screen: Screen) {
+    val currentRoute = currentDestination?.route ?: return
+    if (currentRoute == Screen.Onboarding.route || currentRoute == screen.route) return
+
+    // Close details before saving a tab so selecting a tab always opens its main screen.
+    if (!Screen.isBottomTab(currentRoute)) popBackStack()
+    if (currentDestination?.route == screen.route) return
+
+    if (screen == Screen.Home) {
+        popBackStack(Screen.Home.route, inclusive = false, saveState = true)
+    } else {
+        navigate(screen.route) {
+            popUpTo(Screen.Home.route) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+}
+
+private fun NavHostController.openDetail(screen: Screen) {
+    if (!Screen.isBottomTab(currentDestination?.route)) return
+    navigate(screen.route) { launchSingleTop = true }
+}
+
+private fun NavHostController.closeDetail(screen: Screen) {
+    if (currentDestination?.route == screen.route) popBackStack()
 }

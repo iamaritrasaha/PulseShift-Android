@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,6 +70,7 @@ import com.pulseshift.app.ui.components.LedStripPreview
 import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
 import com.pulseshift.app.ui.components.StatusDot
+import com.pulseshift.app.ui.theme.DarkTextSecondary
 import com.pulseshift.app.ui.theme.HardwareAmberWarning
 import com.pulseshift.app.ui.theme.HardwareGreenVerified
 import com.pulseshift.app.ui.theme.HardwareInactiveOff
@@ -212,7 +214,7 @@ private fun ConnectionBanner(
         headerAction = {
             FilledTonalButton(
                 onClick = onNavigateToDevices,
-                modifier = Modifier.height(36.dp),
+                modifier = Modifier.heightIn(min = 36.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
             ) {
                 Text(
@@ -450,7 +452,7 @@ private fun RpmGaugeCard(
                 }
 
                 Surface(
-                    modifier = Modifier.weight(1f).height(30.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 30.dp),
                     shape = RoundedCornerShape(6.dp),
                     color = if (isThresholdReached) ledColor.copy(alpha = 0.25f) else Color(0xFF13131A),
                     border = BorderStroke(
@@ -463,7 +465,7 @@ private fun RpmGaugeCard(
                             text = if (thresh % 1000 == 0) "${thresh / 1000}k" else String.format(Locale.US, "%.1fk", thresh / 1000f),
                             style = PulseShiftMonoTiny,
                             fontWeight = if (isThresholdReached) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isThresholdReached) ledColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            color = if (isThresholdReached) ledColor else DarkTextSecondary,
                             maxLines = 1,
                             softWrap = false
                         )
@@ -483,11 +485,8 @@ private fun RpmGaugeCard(
 
         Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column {
                 Text(
                     text = "Profile: ${lighting.effect.displayName}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -502,13 +501,13 @@ private fun RpmGaugeCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onNavigateToRpm,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) {
                     Text("Tuning")
                 }
                 Button(
                     onClick = onNavigateToLighting,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) {
                     Text("Studio")
                 }
@@ -579,7 +578,7 @@ private fun LightControlCard(
             shape = PulseShiftShapeTokens.Control,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(PulseShiftSpacing.MinTouchTarget)
+                .heightIn(min = PulseShiftSpacing.MinTouchTarget)
         ) {
             Text("Open Lighting Studio")
         }
@@ -613,7 +612,7 @@ private fun QuickAction(
 ) {
     Surface(
         modifier = modifier
-            .height(72.dp)
+            .heightIn(min = 72.dp)
             .clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         shape = PulseShiftShapeTokens.Control
@@ -641,7 +640,7 @@ private fun QuickPresetsRow(
                 AssistChip(
                     onClick = { onApply(preset) },
                     label = { Text(preset.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    modifier = Modifier.height(PulseShiftSpacing.MinTouchTarget)
+                    modifier = Modifier.heightIn(min = PulseShiftSpacing.MinTouchTarget)
                 )
             }
         }
