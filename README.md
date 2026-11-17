@@ -35,7 +35,7 @@ PulseShift for Android provides complete standalone control over the physical ES
 
 ---
 
-### Live Controller Data (Android-only, firmware unchanged)
+### Live Controller Data & Optional Voltage Experiment
 
 The Dashboard's **Live Controller Data** section reads the firmware's existing BLE
 RPM telemetry (10 Hz) and health notifications (1 Hz). It displays received CAN
@@ -50,15 +50,20 @@ stale; this page does not write to the ESP32.
 | Raw RPM candidate and age | **Yes** | Existing BLE RPM telemetry; freshness is enforced. |
 | CAN RX frames, traffic state, driver errors | **Yes** | Existing BLE RPM and health packets. Counters are cumulative for the current controller session. |
 | ESP32 uptime and flash/storage flags | **Yes** | Existing BLE RPM and health packets. |
-| Motorcycle battery voltage | **No** | 0x303 byte 1 changed in the saved engine-off capture, but its identity, scaling and voltage reference are unverified. BLE does not publish this byte as live battery voltage. Shows `— V`, **not** a guessed number. |
+| Motorcycle battery voltage | **Experimental estimate with paired firmware only** | Standard CAN `0x303[1]` raw byte, hypothesized `raw / 10.0 V`. App displays **EXPERIMENTAL** plus the raw byte only when tagged `0xA5` and fresh; old firmware or stale `0x5A` displays `— V`. Not validated against multimeter. |
 | Engine/ambient temperature | **No** | 0x302 byte 1 changed during the saved capture; sensor identity and calibration are unknown, and this is not streamed as a live value. Shows `— °C`. |
 
 The November 17, 2026 capture consists exclusively of **23,370 key-on,
-engine-off CAN frames**; it does not establish engineering units for any new
-sensor. Do not repurpose the active RPM decoder to sample a different CAN ID.
-A trustworthy live motorcycle voltage meter would require independent meter
-validation **and** a separately authorized firmware telemetry change. That is
-out of scope for the Android-only update.
+engine-off CAN frames**, not reference-calibrated voltage. The paired optional
+firmware experiment from the feature branch passively samples `0x303[1]`
+without changing the existing RPM decoder or CAN traffic. It publishes a
+tagged raw byte using reserved RPM BLE packet positions 18-19. **The Android
+APK alone cannot activate the meter**: the matching firmware must be reviewed,
+backed up and installed separately using an application-only method that
+preserves captured CAN data and owner credentials. No firmware has been
+flashed as part of this PR. Measure real battery-terminal voltage independently
+at multiple points (key-on, idling, charging) before treating the hypothesis
+as verified. Temperature remains unverified and unavailable.
 
 ---
 
