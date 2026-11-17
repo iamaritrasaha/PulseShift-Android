@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,14 +46,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
+import com.pulseshift.app.domain.model.CanHealthState
+import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -66,6 +72,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
+import kotlinx.coroutines.delay
 import com.pulseshift.app.ui.components.LedStripPreview
 import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
@@ -107,6 +114,7 @@ fun HomeScreen(
     val lighting by viewModel.lightingState.collectAsState()
     val device by viewModel.connectedDevice.collectAsState()
     val rpm by viewModel.rpmTelemetryState.collectAsState()
+    val canHealth by viewModel.canHealthState.collectAsState()
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val presets by viewModel.presets.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
@@ -147,6 +155,13 @@ fun HomeScreen(
                     lighting = lighting,
                     onNavigateToRpm = onNavigateToRpm,
                     onNavigateToLighting = onNavigateToLighting
+                )
+            }
+            item {
+                LiveControllerDataCard(
+                    rpm = rpm,
+                    health = canHealth,
+                    connectionState = connectionState
                 )
             }
             item {
@@ -513,6 +528,120 @@ private fun RpmGaugeCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * Read-only dashboard summary of telemetry the already-flashed ESP32 actually
+ * exposes over BLE. Voltage and temperature are NOT present in that protocol.
+ */
+@Composable
+private fun LiveControllerDataCard(
+    rpm: RpmTelemetryState?,
+    health: CanHealthState?,
+    connectionState: BleConnectionState
+) {
+    val connected = connectionState == BleConnectionState.READY ||
+        connectionState == BleConnectionState.RECEIVING_TELEMETRY ||
+        connectionState == BleConnectionState.CONNECTED_WAITING_FOR_DATA
+
+    // A stalled notification stream must age out even if no new packet arrives.
+    var clockMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(connected) {
+        clockMs = System.currentTimeMillis()
+        while (connected) {
+            delay(1_000)
+            clockMs = System.currentTimeMillis()
+        }
+    }
+    val state = LiveTelemetrySnapshot.from(
+        telemetry = rpm,
+        health = health,
+        connected = connected,
+        nowMs = maxOf(clockMs, System.currentTimeMillis())
+    )
+
+    SectionCard(
+        title = "Live Controller Data",
+        subtitle = "ESP32 BLE telemetry · read-only",
+        headerAction = {
+            StatusPill(
+                text = when {
+                    !connected -> "OFFLINE"
+                    state.hasLiveData -> "LIVE"
+                    else -> "WAITING"
+                },
+                color = if (state.hasLiveData) HardwareGreenVerified else HardwareAmberWarning
+            )
+        }
+    ) {
+        Text("Battery voltage", style = MaterialTheme.typography.labelLarge)
+        Text("— V", style = PulseShiftMonoLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Unavailable: the current BLE protocol does not expose verified battery voltage.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
+        Text("Temperature", style = MaterialTheme.typography.labelLarge)
+        Text("— °C", style = PulseShiftMonoLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Unavailable: no temperature signal has been identified and calibrated.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
+        LiveMetricRow("CAN frames received", state.receivedFrames?.toString() ?: "—")
+        LiveMetricRow("CAN traffic (last second)", state.trafficActive?.let { if (it) "Detected" else "No traffic" } ?: "—")
+        LiveMetricRow("RPM candidate raw byte", state.candidateRawByte?.let { "0x" + it.toString(16).uppercase().padStart(2, '0') } ?: "—")
+        LiveMetricRow("RPM candidate age", state.candidateAgeMs?.let { it.toString() + " ms" } ?: "—")
+        LiveMetricRow("ESP32 uptime", state.uptimeSeconds?.let { it.toString() + " s" } ?: "—")
+        LiveMetricRow("CAN frames missed", state.missedFrames?.toString() ?: "—")
+        LiveMetricRow("CAN FIFO overruns", state.fifoOverruns?.toString() ?: "—")
+        LiveMetricRow("CAN bus errors", state.busErrors?.toString() ?: "—")
+        LiveMetricRow("Frames saved this session", state.recordedThisSession?.toString() ?: "—")
+        LiveMetricRow("Recording active", state.recordingActive?.let { if (it) "Yes" else "No" } ?: "—")
+        LiveMetricRow("Prior capture preserved", state.capturePreserved?.let { if (it) "Yes" else "No" } ?: "—")
+        LiveMetricRow(
+            "LittleFS storage",
+            when {
+                state.storageMounted == null -> "—"
+                state.storageMounted == false -> "Unavailable"
+                state.storageFull == true -> "Full"
+                else -> "Mounted"
+            }
+        )
+        Spacer(Modifier.height(PulseShiftSpacing.SmallLabel))
+        Text(
+            "Voltage candidate 0x303[1] and temperature candidate 0x302[1] are " +
+                "archived CAN hypotheses, not live measurements. No units or scaling have been assumed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun LiveMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            style = PulseShiftMonoSmall,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(0.8f)
+        )
     }
 }
 
