@@ -35,6 +35,33 @@ PulseShift for Android provides complete standalone control over the physical ES
 
 ---
 
+### Live Controller Data (Android-only, firmware unchanged)
+
+The Dashboard's **Live Controller Data** section reads the firmware's existing BLE
+RPM telemetry (10 Hz) and health notifications (1 Hz). It displays received CAN
+frames, raw RPM candidate, sample age, ESP32 uptime, active traffic, missed CAN
+frames, FIFO overruns, bus errors, recording state, preserved-capture flag, and
+LittleFS health. Values show an unavailable dash if disconnected, missing, or
+stale; this page does not write to the ESP32.
+
+| Desired vehicle signal | Available live? | Evidence / limitation |
+|---|---|---|
+| Provisional engine RPM | **Yes, uncalibrated** | Current BLE RPM telemetry, CAN 0x301[0] x40. Calibration is not verified. |
+| Raw RPM candidate and age | **Yes** | Existing BLE RPM telemetry; freshness is enforced. |
+| CAN RX frames, traffic state, driver errors | **Yes** | Existing BLE RPM and health packets. Counters are cumulative for the current controller session. |
+| ESP32 uptime and flash/storage flags | **Yes** | Existing BLE RPM and health packets. |
+| Motorcycle battery voltage | **No** | 0x303 byte 1 changed in the saved engine-off capture, but its identity, scaling and voltage reference are unverified. BLE does not publish this byte as live battery voltage. Shows `— V`, **not** a guessed number. |
+| Engine/ambient temperature | **No** | 0x302 byte 1 changed during the saved capture; sensor identity and calibration are unknown, and this is not streamed as a live value. Shows `— °C`. |
+
+The November 17, 2026 capture consists exclusively of **23,370 key-on,
+engine-off CAN frames**; it does not establish engineering units for any new
+sensor. Do not repurpose the active RPM decoder to sample a different CAN ID.
+A trustworthy live motorcycle voltage meter would require independent meter
+validation **and** a separately authorized firmware telemetry change. That is
+out of scope for the Android-only update.
+
+---
+
 ## 1. Architecture & Design Principles
 
 The Android application is designed around modern Android development standards and robust embedded integration:
