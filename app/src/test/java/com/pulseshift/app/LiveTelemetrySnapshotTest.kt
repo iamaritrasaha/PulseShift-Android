@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveTelemetrySnapshotTest {
-    private fun rpm(at: Long, fresh: Boolean = true, raw: Int = 122) = RpmTelemetryState(
+    private fun rpm(at: Long, fresh: Boolean = true, raw: Int = 122, reserved: Int = 0) = RpmTelemetryState(
         protocolVersion = 1,
         statusFlags = RpmStatusFlags(
             isCandidateFresh = fresh,
@@ -31,6 +31,7 @@ class LiveTelemetrySnapshotTest {
         captureStage = 1,
         totalCanFramesReceived = 1234,
         rpmSampleAgeMs = 42,
+        reserved = reserved,
         timestampReceivedMs = at
     )
 
@@ -129,6 +130,45 @@ class LiveTelemetrySnapshotTest {
         assertNull(snapshot.candidateRawByte)
         assertNull(snapshot.provisionalRpm)
         assertNull(snapshot.candidateAgeMs)
+    }
+
+    @Test
+    fun taggedCanVoltagePredictionIsDisplayedOnlyWhileFresh() {
+        // 0xA5 = experiment-supported/fresh, 0x7A raw => 12.2 V hypothesis.
+        val state = LiveTelemetrySnapshot.from(
+            rpm(10_000, reserved = 0xA57A), health(10_000), true, nowMs = 10_100
+        )
+        assertEquals(true, state.voltageProbeSupported)
+        assertEquals(0x7A, state.voltageCandidateRaw)
+        assertEquals(12.2, state.batteryVolts!!, 0.00001)
+        assertNull(state.temperatureCelsius)
+    }
+
+    @Test
+    fun staleOrUnsupportedVoltageProbeNeverShowsZeroOrOldVoltage() {
+        val stale = LiveTelemetrySnapshot.from(
+            rpm(10_000, reserved = 0x5A00), health(10_000), true, nowMs = 10_100
+        )
+        assertTrue(stale.voltageProbeSupported)
+        assertNull(stale.voltageCandidateRaw)
+        assertNull(stale.batteryVolts)
+
+        val legacy = LiveTelemetrySnapshot.from(
+            rpm(10_000, reserved = 0), health(10_000), true, nowMs = 10_100
+        )
+        assertFalse(legacy.voltageProbeSupported)
+        assertNull(legacy.batteryVolts)
+
+        val disconnected = LiveTelemetrySnapshot.from(
+            rpm(10_000, reserved = 0xA57A), health(10_000), false, nowMs = 10_100
+        )
+        assertNull(disconnected.batteryVolts)
+        assertNull(disconnected.voltageCandidateRaw)
+
+        val expired = LiveTelemetrySnapshot.from(
+            rpm(10_000, reserved = 0xA57A), health(10_000), true, nowMs = 12_100
+        )
+        assertNull(expired.batteryVolts)
     }
 
     @Test
