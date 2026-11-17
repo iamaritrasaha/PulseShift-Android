@@ -575,10 +575,25 @@ private fun LiveControllerDataCard(
             )
         }
     ) {
-        Text("Battery voltage", style = MaterialTheme.typography.labelLarge)
-        Text("— V", style = PulseShiftMonoLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Battery voltage · EXPERIMENTAL", style = MaterialTheme.typography.labelLarge)
         Text(
-            "Unavailable: the current BLE protocol does not expose verified battery voltage.",
+            text = state.batteryVolts?.let { String.format(Locale.US, "%.1f V", it) } ?: "— V",
+            style = PulseShiftMonoLarge,
+            color = if (state.batteryVolts != null) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = when {
+                state.batteryVolts != null ->
+                    "Prediction only: CAN 0x303[1] / 10. Raw byte " +
+                        "0x" + state.voltageCandidateRaw!!.toString(16).uppercase().padStart(2, '0') +
+                        ". Compare with battery-terminal multimeter readings. NOT calibrated."
+                !connected -> "Connect to the ESP32 to compare with your battery multimeter."
+                !state.hasFreshRpmPacket -> "Waiting for a fresh BLE RPM/voltage notification."
+                !state.voltageProbeSupported ->
+                    "The installed ESP32 firmware has no voltage probe. A compatible firmware update is required."
+                else -> "Waiting for a fresh CAN 0x303 frame. No voltage available."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -615,8 +630,8 @@ private fun LiveControllerDataCard(
         )
         Spacer(Modifier.height(PulseShiftSpacing.SmallLabel))
         Text(
-            "Voltage candidate 0x303[1] and temperature candidate 0x302[1] are " +
-                "archived CAN hypotheses, not live measurements. No units or scaling have been assumed.",
+            "Voltage is an unverified prediction, not a warning/safety instrument. " +
+                "Temperature candidate 0x302[1] is archived and cannot yet be displayed in °C.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
