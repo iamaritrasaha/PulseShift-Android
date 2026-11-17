@@ -40,6 +40,20 @@ data class RpmTelemetryState(
     val reserved: Int = 0,
     val timestampReceivedMs: Long = System.currentTimeMillis()
 ) {
+    /** Optional experimental voltage probe in RPM packet bytes 18-19.
+     * 0xA5xx = fresh CAN 0x303[1] raw byte, 0x5A00 = stale,
+     * 0x0000 = old firmware / unsupported. NEVER treat absent data as 0 V.
+     * Hypothesized scaling: raw / 10.0 V. No multimeter calibration yet.
+     */
+    val experimentalVoltageProbeSupported: Boolean
+        get() = (reserved ushr 8) == 0xA5 || (reserved ushr 8) == 0x5A
+
+    val experimentalVoltageRaw: Int?
+        get() = if ((reserved ushr 8) == 0xA5) reserved and 0xFF else null
+
+    val experimentalVoltageVolts: Double?
+        get() = experimentalVoltageRaw?.div(10.0)
+
     val isRpmAvailable: Boolean
         get() = statusFlags.isCandidateFresh &&
                 provisionalRpm != 65535 &&
