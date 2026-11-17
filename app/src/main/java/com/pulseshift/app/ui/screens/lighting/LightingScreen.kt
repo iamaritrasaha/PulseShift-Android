@@ -225,9 +225,10 @@ fun LightingScreen(
                                 Text(
                                     text = when {
                                         lighting.isSyncUnknown -> "Active Rev ? · Controller Sync Unknown"
-                                        snapshot != null -> "Active Rev ${snapshot!!.activeRevision} · Calibration " +
+                                        lighting.isPendingSync -> "Waiting for configuration readback"
+                                        lighting.isHardwareConfirmed && snapshot != null -> "Active Rev ${snapshot!!.activeRevision} · Calibration " +
                                                 if (snapshot!!.calibrationVerified) "VERIFIED" else "UNVERIFIED"
-                                        else -> "Hardware synchronized"
+                                        else -> "Configuration readback unavailable"
                                     },
                                     style = PulseShiftMonoTiny,
                                     color = if (lighting.isSyncUnknown) HardwareAmberWarning else MaterialTheme.colorScheme.onSurfaceVariant
@@ -240,9 +241,10 @@ fun LightingScreen(
                                 text = when {
                                     !isAuthenticated -> "UNAUTHENTICATED"
                                     lighting.isSyncUnknown -> "SYNC UNKNOWN"
+                                    lighting.isPendingSync -> "SYNC IN PROGRESS"
                                     unsaved -> "RAM ONLY (UNSAVED)"
                                     isNvsConfirmed -> "PERSISTED (NVS)"
-                                    else -> "RAM ACTIVE (UNSAVED)"
+                                    else -> "NVS SAVE UNCONFIRMED"
                                 },
                                 color = when {
                                     !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning
@@ -454,10 +456,11 @@ fun LightingScreen(
                             StatusPill(
                                 text = when {
                                     !isAuthenticated -> "AUTH REQUIRED"
-                                    lighting.isSyncUnknown -> "SYNC UNKNOWN"
-                                    unsaved -> "RAM ACTIVE (UNSAVED)"
                                     isNvsConfirmed -> "SAVED IN FLASH"
-                                    else -> "RAM ONLY (UNSAVED)"
+                                    lighting.isSyncUnknown -> "SYNC UNKNOWN"
+                                    lighting.isPendingSync -> "SYNC IN PROGRESS"
+                                    unsaved -> "RAM ACTIVE (UNSAVED)"
+                                    else -> "NVS SAVE UNCONFIRMED"
                                 },
                                 color = when {
                                     !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning

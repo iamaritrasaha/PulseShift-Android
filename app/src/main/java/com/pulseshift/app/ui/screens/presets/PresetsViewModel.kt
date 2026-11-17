@@ -7,6 +7,7 @@ import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.ShiftLightConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -38,10 +39,13 @@ class PresetsViewModel(
 
     fun applyPreset(preset: Preset) {
         viewModelScope.launch {
+            if (_isBusy.value) return@launch
             _isBusy.value = true
             try {
-                repository.applyPreset(preset)
-                _userMessage.tryEmit("Applied preset '${preset.name}' to ESP32")
+                val result = repository.applyPreset(preset)
+                _userMessage.tryEmit(result.message(preset.name))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _userMessage.tryEmit("Failed to apply preset: ${e.message}")
             } finally {

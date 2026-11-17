@@ -25,6 +25,7 @@ import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.LogSeverity
 import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -147,7 +148,7 @@ class TerminalTestRepository : PulseShiftRepository {
     override suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float) {}
     override suspend fun setRpmHysteresis(hysteresisRpm: Int) {}
 
-    override suspend fun applyPreset(preset: Preset) {}
+    override suspend fun applyPreset(preset: Preset): PresetApplyResult = PresetApplyResult.READBACK_CONFIRMED
     override suspend fun savePreset(preset: Preset) {}
     override suspend fun updatePreset(preset: Preset) {}
     override suspend fun duplicatePreset(preset: Preset): Preset? = null
@@ -383,7 +384,7 @@ class TerminalViewModelTest {
 
         viewModel.submit("DUMP NEXT")
         // Resolve the DUMP NEXT request so the test does not wait for its timeout
-        bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 5, isFinished = false))
+        bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 5, isFinished = true))
 
         val nextRequestLine = viewModel.lines.value.last { it.text.contains("[DUMP] Requested page") }
         assertTrue("DUMP NEXT must resume at exact cursor 5", nextRequestLine.text.contains("from record 5"))
@@ -423,7 +424,7 @@ class TerminalViewModelTest {
     }
 
     @Test
-    fun testDuplicateNotificationsBeyondPageSizeAreDropped() {
+    fun testOversizedPageCannotPublishRecordsOrAdvanceCursor() {
         viewModel.submit("DUMP PAGE 1")
         // Contract violation (page > 12 records): extras beyond the page size
         // must never be displayed as if they belonged to this page.
@@ -432,11 +433,10 @@ class TerminalViewModelTest {
         }
         bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 14, isFinished = false))
 
-        assertEquals(
-            "Records beyond the 12-record page contract must be dropped",
-            12,
-            viewModel.lines.value.count { it.type == TerminalLineType.CAPTURE }
-        )
+        // The bounded retry receives another mismatched end marker.
+        bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 14, isFinished = false))
+        assertEquals(0, viewModel.lines.value.count { it.type == TerminalLineType.CAPTURE })
+        assertTrue(lastLineOfType(TerminalLineType.ERROR).text.contains("Phone cursor stays at 0"))
     }
 
     // --- Defect 5: LOGS & DUMP check owner auth and handle all outcomes ---
@@ -666,13 +666,13 @@ class TerminalViewModelTest {
                 bleManager.logReassembler.emitDirectLogPageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = true))
             },
             "DUMP" to {
-                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = false))
+                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = true))
             },
             "DUMP NEXT" to {
-                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = false))
+                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = true))
             },
             "DUMP PAGE 1" to {
-                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = false))
+                bleManager.logReassembler.emitDirectCapturePageEnd(HistoricalPageEnd(nextOffset = 0, isFinished = true))
             }
         )
 

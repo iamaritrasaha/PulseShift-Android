@@ -15,6 +15,7 @@ import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -72,7 +73,7 @@ interface PulseShiftRepository {
     suspend fun setRpmHysteresis(hysteresisRpm: Int)
 
     // Presets
-    suspend fun applyPreset(preset: Preset)
+    suspend fun applyPreset(preset: Preset): PresetApplyResult
     suspend fun savePreset(preset: Preset)
     suspend fun updatePreset(preset: Preset)
     suspend fun duplicatePreset(preset: Preset): Preset?

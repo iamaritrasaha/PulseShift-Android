@@ -523,4 +523,7 @@ object PulseShiftBleProtocol {
     }
 
     fun buildOtaStatusV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_OTA_STATUS, seq)
+
+    fun buildOtaImageDigestV2(seq: Int, index: Int): ByteArray =
+        buildV2Frame(V2_OPCODE_OTA_STATUS, seq, byteArrayOf(index.toByte()))
 }

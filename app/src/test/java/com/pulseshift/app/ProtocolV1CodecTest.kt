@@ -154,13 +154,14 @@ class ProtocolV1CodecTest {
 
     @Test
     fun testPageEndNotification() {
-        val reassembler = DiagnosticLogReassembler()
+        var historyEnds = 0
+        val reassembler = DiagnosticLogReassembler { historyEnds++ }
         // Page End: payload len = 5, Bit 2 set (0x04)
         // Payload: nextOffset = 2048 (0x00000800 LE), finished = 1
         val payload = byteArrayOf(0x00, 0x08, 0x00, 0x00, 0x01)
         val packet = ByteArray(6 + 5)
         packet[0] = 1 // Version
-        packet[1] = 0x04 // Bit 2: End of page
+        packet[1] = 0x06 // Final + end of page
         packet[2] = 0 // MsgId
         packet[3] = 0
         packet[4] = 0 // Chunk index
@@ -170,6 +171,13 @@ class ProtocolV1CodecTest {
         val resultChunk = reassembler.processChunkBytes(packet)
         assertNotNull(resultChunk)
         assertTrue(resultChunk!!.flags.isEndOfHistoricalPage)
+        assertEquals(1, historyEnds)
+
+        packet[1] = 0x16 // Capture EOP doesn't end historical log retrieval.
+        reassembler.processChunkBytes(packet)
+        packet[1] = 0x04 // Missing final flag, so malformed.
+        reassembler.processChunkBytes(packet)
+        assertEquals(1, historyEnds)
     }
 
     @Test

@@ -22,6 +22,7 @@ import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -30,16 +31,20 @@ import com.pulseshift.app.domain.model.StartupAnimation
 import com.pulseshift.app.domain.model.WarningStyle
 import com.pulseshift.app.ui.screens.lighting.LightingViewModel
 import com.pulseshift.app.ui.screens.presets.PresetsViewModel
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -255,6 +260,31 @@ class PresetPersistenceTest {
         viewModel.applyPreset(preset)
 
         assertFalse("ViewModel must not stay busy after applyPreset failure", viewModel.isBusy.value)
+    }
+
+    @Test
+    fun testPresetSnackbarDistinguishesConfirmedReadbackFromUnknownCommit() = runBlocking {
+        val fakeRepo = FakePulseShiftRepository()
+        val viewModel = PresetsViewModel(fakeRepo)
+        val preset = Preset.DefaultPresets.first()
+
+        for (outcome in PresetApplyResult.entries) {
+            fakeRepo.presetApplyOutcome = outcome
+            val feedback = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeout(1000L) { viewModel.userMessage.first() }
+            }
+            viewModel.applyPreset(preset)
+            val message = feedback.await()
+            when (outcome) {
+                PresetApplyResult.READBACK_CONFIRMED -> {
+                    assertTrue(message.contains("active in ESP32 RAM"))
+                    assertTrue(message.contains("Readback confirmed"))
+                }
+                PresetApplyResult.APPLIED_NEEDS_READBACK -> assertTrue(message.contains("Resync to verify readback"))
+                PresetApplyResult.COMMIT_UNKNOWN -> assertTrue(message.contains("commit unverified"))
+            }
+            assertFalse(viewModel.isBusy.value)
+        }
     }
 
     @Test
@@ -506,6 +536,7 @@ class FakePulseShiftRepository : PulseShiftRepository {
     var shouldFailSave = false
     var saveFailureMessage = "Save preset failed"
     var profileApplyOutcome: ProfileApplyResult = ProfileApplyResult.PERSISTED
+    var presetApplyOutcome: PresetApplyResult = PresetApplyResult.READBACK_CONFIRMED
 
     override suspend fun enrollOwner(secret: ByteArray): Boolean = false
     override suspend fun authenticateChallengeResponse(): Boolean = false
@@ -525,7 +556,7 @@ class FakePulseShiftRepository : PulseShiftRepository {
     override suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float) {}
     override suspend fun setRpmHysteresis(hysteresisRpm: Int) {}
 
-    override suspend fun applyPreset(preset: Preset) {
+    override suspend fun applyPreset(preset: Preset): PresetApplyResult {
         if (shouldFailApply) {
             throw IllegalStateException(applyFailureMessage)
         }
@@ -538,6 +569,7 @@ class FakePulseShiftRepository : PulseShiftRepository {
             startupAnimation = preset.startupAnimation,
             startupDurationMs = preset.startupDurationMs
         )
+        return presetApplyOutcome
     }
 
     override suspend fun savePreset(preset: Preset) {

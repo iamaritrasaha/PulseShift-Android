@@ -14,44 +14,45 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-class DiagnosticLogReassembler {
+class DiagnosticLogReassembler(private val onHistoricalPageEnd: () -> Unit = {}) {
 
     private val _completedMessages = MutableSharedFlow<DiagnosticLogMessage>(replay = 1, extraBufferCapacity = 64)
     val completedMessages: SharedFlow<DiagnosticLogMessage> = _completedMessages.asSharedFlow()
 
     fun emitDirectMessage(message: DiagnosticLogMessage) {
-        _completedMessages.tryEmit(message)
+        emitMessage(message)
     }
 
+    @Synchronized
     fun emitDirectCaptureRecord(record: CaptureRecord) {
-        _captureRecordEvents.tryEmit(record)
+        _capturePageEvents.tryEmit(CapturePageEvent.Record(directCaptureMessageId++, record))
     }
 
+    @Synchronized
     fun emitDirectCapturePageEnd(pageEnd: HistoricalPageEnd) {
-        _capturePageEndEvents.tryEmit(pageEnd)
+        _capturePageEvents.tryEmit(CapturePageEvent.End(directCaptureMessageId++, pageEnd))
     }
 
     fun emitDirectLogPageEnd(pageEnd: HistoricalPageEnd) {
+        onHistoricalPageEnd()
         _pageEndEvents.tryEmit(pageEnd)
     }
 
     private val _pageEndEvents = MutableSharedFlow<HistoricalPageEnd>(extraBufferCapacity = 16)
     val pageEndEvents: SharedFlow<HistoricalPageEnd> = _pageEndEvents.asSharedFlow()
 
-    // CAN capture page streaming (BLE_LOG_FLAG_CAPTURE_LINE): capture record
-    // lines and their end-of-page markers are routed to dedicated flows so
-    // they never mix with diagnostic messages.
-    private val _captureRecordEvents = MutableSharedFlow<CaptureRecord>(extraBufferCapacity = 64)
-    val captureRecordEvents: SharedFlow<CaptureRecord> = _captureRecordEvents.asSharedFlow()
-
-    private val _capturePageEndEvents = MutableSharedFlow<HistoricalPageEnd>(extraBufferCapacity = 16)
-    val capturePageEndEvents: SharedFlow<HistoricalPageEnd> = _capturePageEndEvents.asSharedFlow()
+    // Record and EOP events share one ordered stream, including the final record.
+    private val _capturePageEvents = MutableSharedFlow<CapturePageEvent>(extraBufferCapacity = 64)
+    internal val capturePageEvents: SharedFlow<CapturePageEvent> = _capturePageEvents.asSharedFlow()
+    private val completedCaptureMessages = LinkedHashSet<Int>()
+    private var directCaptureMessageId = 0
 
     private val activeMessages = ConcurrentHashMap<Int, MutableMap<Int, DiagnosticLogChunk>>()
     private val messageFirstReceived = ConcurrentHashMap<Int, Long>()
     private val messageIsHistorical = ConcurrentHashMap<Int, Boolean>()
     private val messageIsCaptureLine = ConcurrentHashMap<Int, Boolean>()
 
+    @Synchronized
     fun processChunkBytes(bytes: ByteArray, isHistorical: Boolean = false): DiagnosticLogChunk? {
         try {
             if (bytes.size < 6) return null
@@ -63,7 +64,7 @@ class DiagnosticLogReassembler {
             val chunkIndex = bytes[4].toInt() and 0xFF
             val payloadLength = bytes[5].toInt() and 0xFF
 
-            if (bytes.size < 6 + payloadLength || payloadLength > 14) return null
+            if (bytes.size < 6 + payloadLength || payloadLength !in 1..14 || chunkIndex >= 10) return null
 
             val payload = bytes.copyOfRange(6, 6 + payloadLength)
 
@@ -78,28 +79,28 @@ class DiagnosticLogReassembler {
 
             // Check if page-end notification
             if (flags.isEndOfHistoricalPage) {
-                if (payloadLength == 5) {
+                if (payloadLength == 5 && chunkIndex == 0 && flags.isFinalChunk && payload[4].toInt() in 0..1) {
                     val nextOffset = (payload[0].toLong() and 0xFF) or
                             ((payload[1].toLong() and 0xFF) shl 8) or
                             ((payload[2].toLong() and 0xFF) shl 16) or
                             ((payload[3].toLong() and 0xFF) shl 24)
                     val finished = payload[4].toInt() != 0
                     if (flags.isCaptureLine) {
-                        _capturePageEndEvents.tryEmit(HistoricalPageEnd(nextOffset, finished))
+                        if (rememberCaptureMessage(messageId)) {
+                            _capturePageEvents.tryEmit(
+                                CapturePageEvent.End(messageId, HistoricalPageEnd(nextOffset, finished))
+                            )
+                        }
                     } else {
-                        _pageEndEvents.tryEmit(HistoricalPageEnd(nextOffset, finished))
+                        emitDirectLogPageEnd(HistoricalPageEnd(nextOffset, finished))
                     }
                 }
                 return chunk
             }
 
-            // Store chunk in message map
-            if (flags.isFirstChunk || chunkIndex == 0) {
-                activeMessages.remove(messageId)
-                messageFirstReceived.remove(messageId)
-                messageIsHistorical.remove(messageId)
-                messageIsCaptureLine.remove(messageId)
-            }
+            if (flags.isCaptureLine && messageId in completedCaptureMessages) return chunk
+            cleanStaleAssemblies()
+            if (activeMessages.size >= 128 && !activeMessages.containsKey(messageId)) return chunk
 
             val chunksMap = activeMessages.computeIfAbsent(messageId) {
                 messageFirstReceived[messageId] = System.currentTimeMillis()
@@ -107,13 +108,11 @@ class DiagnosticLogReassembler {
                 messageIsCaptureLine[messageId] = flags.isCaptureLine
                 ConcurrentHashMap()
             }
+            if (chunksMap.containsKey(chunkIndex)) return chunk
             chunksMap[chunkIndex] = chunk
 
             // Try reassembling if we have both first and final chunks
             checkAndAssemble(messageId)
-
-            // Clean up stale message assemblies (>5s)
-            cleanStaleAssemblies()
 
             return chunk
         } catch (e: Exception) {
@@ -152,7 +151,11 @@ class DiagnosticLogReassembler {
 
                 if (messageIsCaptureLine[messageId] == true) {
                     // CAN capture record line: parse and emit on the capture flow.
-                    parseCaptureLine(decodedText)
+                    parseCaptureLine(decodedText)?.let { record ->
+                        if (rememberCaptureMessage(messageId)) {
+                            _capturePageEvents.tryEmit(CapturePageEvent.Record(messageId, record))
+                        }
+                    }
                     activeMessages.remove(messageId)
                     messageFirstReceived.remove(messageId)
                     messageIsHistorical.remove(messageId)
@@ -180,7 +183,7 @@ class DiagnosticLogReassembler {
                     isCorruptOrIncomplete = false
                 )
 
-                _completedMessages.tryEmit(logMessage)
+                emitMessage(logMessage)
 
                 activeMessages.remove(messageId)
                 messageFirstReceived.remove(messageId)
@@ -190,6 +193,7 @@ class DiagnosticLogReassembler {
         }
     }
 
+    @Synchronized
     fun cleanStaleAssemblies() {
         val now = System.currentTimeMillis()
         val staleIds = messageFirstReceived.filter { (now - it.value) > 5000 }.keys
@@ -223,29 +227,52 @@ class DiagnosticLogReassembler {
         }
     }
 
-    private fun parseCaptureLine(text: String) {
+    private fun parseCaptureLine(text: String): CaptureRecord? {
         // Format from the firmware: CAP,<timestampMs>,<stage>,<idHex>,<ext>,<dlc>,<dataHex>
         val parts = text.trim().removeSuffix("\r").removeSuffix("\n").split(",")
-        if (parts.size < 7 || parts[0] != "CAP") return
-        try {
-            val record = CaptureRecord(
+        if (parts.size != 7 || parts[0] != "CAP" || parts[4] !in setOf("0", "1")) return null
+        return try {
+            val dlc = parts[5].toInt()
+            if (dlc !in 0..8 || parts[6].length != 2 * dlc || parts[6].any { it.digitToIntOrNull(16) == null }) {
+                return null
+            }
+            CaptureRecord(
                 timestampMs = parts[1].toLong(),
                 stage = parts[2].toInt(),
                 canId = parts[3].toLong(16),
                 isExtended = parts[4] != "0",
-                dlc = parts[5].toInt(),
+                dlc = dlc,
                 dataHex = parts[6]
             )
-            _captureRecordEvents.tryEmit(record)
         } catch (e: Exception) {
             // Malformed capture line: drop rather than fabricate data.
+            null
         }
     }
 
+    private fun rememberCaptureMessage(messageId: Int): Boolean {
+        if (!completedCaptureMessages.add(messageId)) return false
+        if (completedCaptureMessages.size > 32) completedCaptureMessages.remove(completedCaptureMessages.first())
+        return true
+    }
+
+    private fun emitMessage(message: DiagnosticLogMessage) {
+        _completedMessages.tryEmit(message)
+        if (message.severity == LogSeverity.ERROR &&
+            (message.messageText.startsWith("AUTH REQUIRED: owner session needed for log/capture export") ||
+                message.messageText.startsWith("CAPTURE EXPORT FAILED:"))
+        ) {
+            _capturePageEvents.tryEmit(CapturePageEvent.Rejected(message.messageText))
+        }
+    }
+
+    @Synchronized
     fun clear() {
         activeMessages.clear()
         messageFirstReceived.clear()
         messageIsHistorical.clear()
         messageIsCaptureLine.clear()
+        completedCaptureMessages.clear()
+        _capturePageEvents.tryEmit(CapturePageEvent.Disconnected)
     }
 }

@@ -14,8 +14,11 @@ import com.pulseshift.app.domain.model.AuthState
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
+import com.pulseshift.app.domain.model.DeviceCommandPhase
 import com.pulseshift.app.domain.model.Preset
+import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.RgbColor
+import com.pulseshift.app.domain.model.WarningStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -1261,14 +1264,224 @@ class BleAuthAndLightingRegressionTest {
             )
 
             // Applying preset must NOT throw even though post-commit snapshot has mismatched brightness
-            repository.applyPreset(targetPreset)
+            val result = repository.applyPreset(targetPreset)
 
             // Crucial: UI state must NOT have rolled back to initial state, but reconciled with device
+            assertEquals(PresetApplyResult.APPLIED_NEEDS_READBACK, result)
             assertEquals("Brightness must reconcile from device snapshot (180)", 180, repository.lightingState.value.brightness)
             assertTrue("isPendingSync must be true indicating unverified snapshot validation", repository.lightingState.value.isPendingSync)
             assertFalse("isHardwareConfirmed must be false when verification failed", repository.lightingState.value.isHardwareConfirmed)
             assertTrue("isSyncUnknown must be true for unverified state", repository.lightingState.value.isSyncUnknown)
             assertTrue("hasUnsavedChanges must remain true", repository.hasUnsavedChanges.value)
         }
+    }
+
+    private val shiftedPreset = Preset.DefaultPresets.first().let { preset ->
+        val config = checkNotNull(preset.shiftLightConfig)
+        preset.copy(
+            shiftLightConfig = config.copy(
+                warningStyle = WarningStyle.STROBE,
+                colors = config.colors.dropLast(1) + RgbColor.DeepBlue
+            )
+        )
+    }
+
+    private fun presetSnapshot(sequence: Int, revision: Long): ConfigSnapshot {
+        val preset = shiftedPreset
+        val config = checkNotNull(preset.shiftLightConfig)
+        return ConfigSnapshot(
+            snapshotId = sequence,
+            activeRevision = revision,
+            brightness = preset.brightness,
+            effect = preset.effect,
+            effectSpeed = preset.effectSpeed,
+            ledColors = preset.ledColors,
+            rpmThresholds = config.thresholds,
+            warningRpm = config.warningRpm,
+            warningPatternId = config.warningStyle.id,
+            warningColor = config.colors.last()
+        )
+    }
+
+    private fun fakePresetController(
+        baseRevision: Long = 41L,
+        dropCommitAck: Boolean = false,
+        onCommit: () -> Unit = {},
+        readback: (attempt: Int, sequence: Int) -> ConfigSnapshot?
+    ): List<ByteArray> {
+        connectedDeviceFlow.value = testDevice
+        val commands = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+        var snapshotRequests = 0
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val frame = invocation.getArgument<ByteArray>(0)
+            commands.add(frame)
+            val opcode = frame[1]
+            val seq = (frame[2].toInt() and 0xFF) or ((frame[3].toInt() and 0xFF) shl 8)
+            when (opcode) {
+                PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                    val snapshot = readback(++snapshotRequests, seq)
+                    if (snapshot != null) configSnapshotsFlow.value = snapshot
+                }
+                else -> {
+                    val commit = opcode == PulseShiftBleProtocol.V2_OPCODE_COMMIT_TRANSACTION
+                    val staged = opcode == PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION || frame[5] == 1.toByte()
+                    if (commit) onCommit()
+                    if (!commit || !dropCommitAck) {
+                        configAcksFlow.tryEmit(
+                            ConfigAckResponse(
+                                opcode = opcode,
+                                sequenceRef = seq,
+                                statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                                resultFlags = if (staged) 0x02 else 0x04,
+                                activeRevision = if (commit) (baseRevision + 1) and 0xFFFF_FFFFL else baseRevision
+                            )
+                        )
+                    }
+                }
+            }
+            true
+        }
+        return commands
+    }
+
+    @Test
+    fun testPresetRetriesOlderReadbackAndPublishesExactWarningConfiguration() = runBlocking {
+        val commands = fakePresetController { attempt, sequence ->
+            if (attempt == 1) ConfigSnapshot(snapshotId = sequence, activeRevision = 41L)
+            else presetSnapshot(sequence, 42L)
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        repository.setBrightness(155)
+        assertTrue(repository.hasUnsavedChanges.value)
+
+        assertEquals(PresetApplyResult.READBACK_CONFIRMED, repository.applyPreset(shiftedPreset))
+        val warningWrite = commands.single { it[1] == PulseShiftBleProtocol.V2_OPCODE_SET_WARNING_RGB }
+        assertEquals(listOf(1, 59, 130, 246), warningWrite.drop(5).map { it.toInt() and 0xFF })
+        assertEquals(shiftedPreset.shiftLightConfig, repository.shiftLightConfig.value)
+        assertEquals(42L, repository.configSnapshot.value?.activeRevision)
+        assertFalse(repository.lightingState.value.isPendingSync)
+        assertTrue(repository.lightingState.value.isHardwareConfirmed)
+        assertTrue(repository.hasUnsavedChanges.value)
+        assertFalse(repository.isNvsConfirmed.value)
+        assertEquals(2, commands.count { it[1] == PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT })
+    }
+
+    @Test
+    fun testStaleOnlyReadbackPreservesAcknowledgedPresetAndResyncKeepsRamUnsaved() = runBlocking {
+        fakePresetController { attempt, sequence ->
+            if (attempt <= 4) ConfigSnapshot(snapshotId = sequence, activeRevision = 41L)
+            else presetSnapshot(sequence, 42L)
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertEquals(PresetApplyResult.APPLIED_NEEDS_READBACK, repository.applyPreset(shiftedPreset))
+        assertEquals(shiftedPreset.brightness, repository.lightingState.value.brightness)
+        assertTrue(repository.lightingState.value.isSyncUnknown)
+        assertEquals(null, repository.reloadConfigFromController())
+        assertTrue(repository.lightingState.value.isSyncUnknown)
+        assertEquals(42L, repository.reloadConfigFromController()?.activeRevision)
+        assertFalse(repository.lightingState.value.isSyncUnknown)
+        assertFalse(repository.lightingState.value.isPendingSync)
+        assertTrue(repository.hasUnsavedChanges.value)
+        assertFalse(repository.isNvsConfirmed.value)
+    }
+
+    @Test
+    fun testMissingCommitAckRecoveredByExactSnapshotAtRevisionWrap() = runBlocking {
+        val commands = fakePresetController(baseRevision = 0xFFFF_FFFFL, dropCommitAck = true) { _, sequence ->
+            presetSnapshot(sequence, 0L)
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertEquals(PresetApplyResult.READBACK_CONFIRMED, repository.applyPreset(shiftedPreset))
+        assertTrue(repository.lightingState.value.isHardwareConfirmed)
+        assertEquals(DeviceCommandPhase.APPLIED, repository.deviceCommandHistory.value.first().phase)
+        assertFalse(commands.any { it[1] == PulseShiftBleProtocol.V2_OPCODE_ABORT_TRANSACTION })
+    }
+
+    @Test
+    fun testCommitDisconnectRemainsUnverifiedAndReconnectReconciles() = runBlocking {
+        whenever(mockCredentialManager.hasEnrolledSecret(testDevice.address)).thenReturn(false)
+        val commands = fakePresetController(dropCommitAck = true, onCommit = {
+            connectionStateFlow.value = BleConnectionState.DISCONNECTED
+        }) { _, sequence ->
+            presetSnapshot(sequence, 42L)
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertEquals(PresetApplyResult.COMMIT_UNKNOWN, repository.applyPreset(shiftedPreset))
+        assertEquals(DeviceCommandPhase.UNVERIFIED, repository.deviceCommandHistory.value.first().phase)
+        assertTrue(repository.lightingState.value.isSyncUnknown)
+        assertFalse(commands.any { it[1] == PulseShiftBleProtocol.V2_OPCODE_ABORT_TRANSACTION })
+
+        connectionStateFlow.value = BleConnectionState.READY
+        withTimeout(5000L) {
+            while (repository.lightingState.value.isSyncUnknown) delay(10)
+        }
+        assertEquals(shiftedPreset.brightness, repository.lightingState.value.brightness)
+        assertTrue(repository.lightingState.value.isHardwareConfirmed)
+        assertFalse(repository.isNvsConfirmed.value)
+    }
+
+    @Test
+    fun testWarningOnlyMismatchDoesNotConfirmPresetReadback() = runBlocking {
+        fakePresetController { _, sequence ->
+            presetSnapshot(sequence, 42L).copy(warningPatternId = 0, warningColor = RgbColor.RacingRed)
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertEquals(PresetApplyResult.APPLIED_NEEDS_READBACK, repository.applyPreset(shiftedPreset))
+        assertEquals(WarningStyle.FLASH, repository.shiftLightConfig.value.warningStyle)
+        assertEquals(RgbColor.RacingRed, repository.shiftLightConfig.value.colors.last())
+        assertTrue(repository.deviceCommandHistory.value.first().detail.contains("warning pattern, warning color"))
+    }
+
+    @Test
+    fun testNewerSnapshotReconcilesCurrentSettingsWithoutClaimingPresetReadback() = runBlocking {
+        fakePresetController { _, sequence -> presetSnapshot(sequence, 43L).copy(brightness = 133) }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertEquals(PresetApplyResult.APPLIED_NEEDS_READBACK, repository.applyPreset(shiftedPreset))
+        assertEquals(133, repository.lightingState.value.brightness)
+        assertEquals(43L, repository.configSnapshot.value?.activeRevision)
+        assertFalse(repository.lightingState.value.isHardwareConfirmed)
+        assertEquals(DeviceCommandPhase.APPLIED, repository.deviceCommandHistory.value.first().phase)
+    }
+
+    @Test
+    fun testPersistedAckWithoutRamReadbackDoesNotConfirmDisplayedConfiguration() = runBlocking {
+        connectedDeviceFlow.value = testDevice
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val command = invocation.getArgument<ByteArray>(0)
+            val opcode = command[1]
+            if (opcode == PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG) {
+                val seq = (command[2].toInt() and 0xFF) or ((command[3].toInt() and 0xFF) shl 8)
+                configAcksFlow.tryEmit(
+                    ConfigAckResponse(
+                        opcode = opcode,
+                        sequenceRef = seq,
+                        statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                        resultFlags = 0x05,
+                        activeRevision = 42L
+                    )
+                )
+            }
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+
+        assertTrue(repository.saveConfigurationToController())
+        assertEquals(DeviceCommandPhase.SAVED, repository.deviceCommandHistory.value.first().phase)
+        assertTrue(repository.isNvsConfirmed.value)
+        assertFalse(repository.hasUnsavedChanges.value)
+        assertTrue(repository.lightingState.value.isSyncUnknown)
+        assertFalse(repository.lightingState.value.isHardwareConfirmed)
     }
 }

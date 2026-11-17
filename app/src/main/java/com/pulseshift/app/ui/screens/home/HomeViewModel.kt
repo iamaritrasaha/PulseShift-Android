@@ -58,7 +58,11 @@ class HomeViewModel(
 
     fun applyPreset(preset: Preset) {
         viewModelScope.launch {
-            repository.applyPreset(preset)
+            try {
+                repository.applyPreset(preset)
+            } catch (_: IllegalStateException) {
+                // The repository sends the rejection to lightingSyncError.
+            }
         }
     }
 }

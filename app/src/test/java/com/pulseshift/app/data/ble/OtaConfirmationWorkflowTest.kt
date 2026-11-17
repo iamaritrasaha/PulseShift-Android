@@ -133,6 +133,7 @@ class OtaConfirmationWorkflowTest {
         assertEquals("Must query status twice (initial check and final verification)", 2, statusQueryCount)
         val state = repository.otaUpdateState.value
         assertTrue("State must be Success", state is OtaUpdateState.Success)
+        assertFalse((state as OtaUpdateState.Success).imageIdentityVerified)
         val succ = state as OtaUpdateState.Success
         assertEquals("2.2.0", succ.previousVersion)
         assertEquals("2.3.0", succ.newVersion)
@@ -293,5 +294,61 @@ class OtaConfirmationWorkflowTest {
             "Error must report unexpected image state",
             fail.reason.contains("expected VALID=2")
         )
+    }
+
+    @Test
+    fun sameDisplayedVersionWithMatchingRunningDigestIsConfirmed() = runBlocking {
+        val state = sameVersionUpdate()
+        assertTrue((state as OtaUpdateState.Success).imageIdentityVerified)
+    }
+
+    @Test
+    fun sameDisplayedVersionWithDifferentRunningDigestWithholdsConfirmation() = runBlocking {
+        val state = sameVersionUpdate(mismatch = true)
+        assertTrue((state as OtaUpdateState.Failed).reason.contains("digest"))
+    }
+
+    @Test
+    fun missingDigestResponseWithholdsConfirmation() = runBlocking {
+        val state = sameVersionUpdate(missing = true)
+        assertTrue((state as OtaUpdateState.Failed).reason.contains("digest"))
+    }
+
+    private suspend fun sameVersionUpdate(mismatch: Boolean = false, missing: Boolean = false): OtaUpdateState {
+        val (repository, _) = createRepository()
+        val expected = ByteArray(32) { it.toByte() }
+        var confirmSent = false
+        var digestQueries = 0
+        repository.commandSenderForTesting = { command, seq, opcode, _ ->
+            when (opcode) {
+                PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS -> {
+                    if (command[4] == 0.toByte()) {
+                        createOtaStatusAck(seq, imageState = if (confirmSent) 2 else 1, hasRollback = true)
+                    } else {
+                        val index = command[6].toInt()
+                        assertEquals(digestQueries++, index)
+                        // 20-byte result layout exercised by the firmware dispatcher fixture.
+                        val result = byteArrayOf(2, 0x65, seq.toByte(), (seq shr 8).toByte(), 0, 0, 1, 0, 0, 0, 9, index.toByte()) +
+                            expected.copyOfRange(index * 8, index * 8 + 8)
+                        if (mismatch && index == 2) result[17] = 0x7F
+                        if (missing && index == 1) null else PulseShiftBleProtocol.parseConfigAck(result)
+                    }
+                }
+                PulseShiftBleProtocol.V2_OPCODE_OTA_CONFIRM -> {
+                    assertEquals(4, digestQueries)
+                    confirmSent = true
+                    createOtaConfirmAck(seq)
+                }
+                else -> null
+            }
+        }
+
+        val shouldConfirm = !mismatch && !missing
+        assertEquals(
+            shouldConfirm,
+            repository.performOtaConfirmationWorkflow("2.3.0", "2.3.0", 1, true, expected)
+        )
+        assertEquals(shouldConfirm, confirmSent)
+        return repository.otaUpdateState.value
     }
 }

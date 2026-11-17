@@ -203,9 +203,9 @@ class LightingViewModel(
     fun applyPreset(preset: com.pulseshift.app.domain.model.Preset) {
         viewModelScope.launch {
             try {
-                repository.applyPreset(preset)
-                _actionFeedback.tryEmit("Applied preset '${preset.name}'")
-            } catch (e: Exception) {
+                val result = repository.applyPreset(preset)
+                _actionFeedback.tryEmit(result.message(preset.name))
+            } catch (e: IllegalStateException) {
                 _actionFeedback.tryEmit("Failed to apply preset: ${e.message}")
             }
         }

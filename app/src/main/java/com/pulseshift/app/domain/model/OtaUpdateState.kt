@@ -1,5 +1,7 @@
 package com.pulseshift.app.domain.model
 
+internal const val OTA_MAX_PACKAGE_BYTES = 0x140000
+
 /**
  * State of a dual-slot authenticated firmware Over-The-Air (OTA) upgrade.
  */
@@ -31,7 +33,8 @@ sealed interface OtaUpdateState {
     data class Success(
         val previousVersion: String,
         val newVersion: String,
-        val activeSlot: Int
+        val activeSlot: Int,
+        val imageIdentityVerified: Boolean
     ) : OtaUpdateState
 
     data class Failed(

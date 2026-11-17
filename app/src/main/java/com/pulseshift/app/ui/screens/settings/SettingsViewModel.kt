@@ -6,6 +6,8 @@ import com.pulseshift.app.data.local.PulseShiftDataStore
 import com.pulseshift.app.data.repository.PulseShiftRepository
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.OtaUpdateState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -27,16 +29,23 @@ class SettingsViewModel(
     val autoReconnect: StateFlow<Boolean> = dataStore.autoReconnect.stateIn(
         viewModelScope, SharingStarted.Eagerly, true
     )
+    private var otaJob: Job? = null
 
     fun startOtaUpdate(imageBytes: ByteArray) {
-        viewModelScope.launch {
+        if (otaJob?.isActive == true) return
+        otaJob = viewModelScope.launch {
             repository.startOtaUpdate(imageBytes)
         }
     }
 
     fun cancelOtaUpdate() {
         viewModelScope.launch {
-            repository.cancelOtaUpdate()
+            if (otaUpdateState.value is OtaUpdateState.Transferring) {
+                otaJob?.cancelAndJoin()
+            } else if (otaUpdateState.value is OtaUpdateState.Success ||
+                otaUpdateState.value is OtaUpdateState.Failed) {
+                repository.cancelOtaUpdate()
+            }
         }
     }
 
