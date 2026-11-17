@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -495,7 +496,7 @@ fun RpmBarPanel(
             Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
             Button(
                 onClick = { viewModel.apply1000To6000Profile() },
-                modifier = Modifier.fillMaxWidth().height(PulseShiftSpacing.MinTouchTarget),
+                modifier = Modifier.fillMaxWidth().heightIn(min = PulseShiftSpacing.MinTouchTarget),
                 shape = PulseShiftShapeTokens.Control,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -697,7 +698,7 @@ private fun WarningCard(viewModel: LightingViewModel, config: ShiftLightConfig) 
                                          else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .heightIn(min = 44.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,

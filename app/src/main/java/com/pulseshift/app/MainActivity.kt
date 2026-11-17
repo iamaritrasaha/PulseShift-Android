@@ -15,7 +15,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulseshift.app.ui.navigation.PulseShiftNavGraph
-import com.pulseshift.app.ui.navigation.Screen
 import com.pulseshift.app.ui.screens.devices.DevicesViewModel
 import com.pulseshift.app.ui.screens.home.HomeViewModel
 import com.pulseshift.app.ui.screens.lighting.LightingViewModel
@@ -38,7 +37,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        checkAndRequestBlePermissions()
+        if (savedInstanceState == null) checkAndRequestBlePermissions()
 
         val app = application as PulseShiftApplication
 
@@ -66,10 +65,8 @@ class MainActivity : ComponentActivity() {
                         viewModel { com.pulseshift.app.ui.screens.terminal.TerminalViewModel(app.bleManager, app.repository) }
 
                     isOnboardingCompleted?.let { completed ->
-                        val startDest = if (completed) Screen.Home.route else Screen.Onboarding.route
-
                         PulseShiftNavGraph(
-                            startDestination = startDest,
+                            showOnboarding = !completed,
                             homeViewModel = homeViewModel,
                             lightingViewModel = lightingViewModel,
                             rpmViewModel = rpmViewModel,

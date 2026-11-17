@@ -5,6 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,10 +18,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BluetoothDisabled
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Warning
@@ -140,7 +149,7 @@ fun StatusPill(
 ) {
     Surface(
         color = color.copy(alpha = 0.15f),
-        contentColor = color,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(8.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.35f)),
         modifier = modifier
@@ -249,6 +258,30 @@ fun StepperControl(
     }
 }
 
+@Composable
+fun PulseShiftDetailTopBar(
+    onBack: () -> Unit,
+    title: @Composable () -> Unit,
+    actions: @Composable () -> Unit = {}
+) {
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                .heightIn(min = 56.dp)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+            }
+            Box(Modifier.weight(1f).padding(horizontal = 4.dp)) { title() }
+            actions()
+        }
+    }
+}
+
 /** Monospace value tile for technical readouts (RPM, offsets, counters). */
 @Composable
 fun MetricTile(
@@ -295,7 +328,7 @@ fun ConfirmDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = { Text(text) },
+        text = { Text(text, modifier = Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = {
             Button(
                 onClick = onConfirm,
@@ -320,7 +353,7 @@ fun InfoDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = { Text(text) },
+        text = { Text(text, modifier = Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
     )
 }

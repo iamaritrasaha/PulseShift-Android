@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,8 +56,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -64,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,7 +75,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.DiagnosticLogMessage
@@ -113,8 +112,8 @@ fun LogsScreen(
     val captureExportState by viewModel.captureExportState.collectAsState()
     val commandHistory by viewModel.deviceCommandHistory.collectAsState()
 
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var showSearchField by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var showSearchField by rememberSaveable { mutableStateOf(false) }
     var showExportMenu by remember { mutableStateOf(false) }
     var showRestartConfirm by remember { mutableStateOf(false) }
     var showClearDiagConfirm by remember { mutableStateOf(false) }
@@ -126,8 +125,7 @@ fun LogsScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Top Header: Title & Actions (Single Top Bar owner architecture)
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
@@ -136,45 +134,24 @@ fun LogsScreen(
                     top = PulseShiftSpacing.ScreenVertical,
                     bottom = PulseShiftSpacing.SmallGap
                 ),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "Diagnostics & Health",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
                 )
-                Spacer(Modifier.height(PulseShiftSpacing.Micro))
-                Text(
-                    text = "Real-time CAN telemetry, bus state & system logs",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val currentHealth = canHealth
-                val isCanHealthy = currentHealth != null && !currentHealth.hasLossOrErrors
-                StatusPill(
-                    text = if (isCanHealthy) "CAN OK" else "CAN INIT",
-                    color = if (isCanHealthy) HardwareGreenVerified else HardwareAmberWarning
-                )
-
-                FilledTonalButton(
-                    onClick = onNavigateToTerminal,
-                    shape = PulseShiftShapeTokens.Control,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(PulseShiftSpacing.Micro))
-                    Text("Terminal", style = MaterialTheme.typography.labelMedium)
+                IconButton(onClick = onNavigateToTerminal) {
+                    Icon(Icons.Rounded.Terminal, contentDescription = "Terminal")
                 }
             }
+            val isCanHealthy = canHealth?.hasLossOrErrors == false
+            StatusPill(
+                text = if (isCanHealthy) "CAN OK" else "CAN INIT",
+                color = if (isCanHealthy) HardwareGreenVerified else HardwareAmberWarning
+            )
         }
 
         TabRow(
@@ -186,7 +163,7 @@ fun LogsScreen(
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("Health Overview") }
+                text = { Text("Health") }
             )
             Tab(
                 selected = selectedTab == 1,
@@ -196,7 +173,7 @@ fun LogsScreen(
             Tab(
                 selected = selectedTab == 2,
                 onClick = { selectedTab = 2 },
-                text = { Text("Device & Capture") }
+                text = { Text("Capture") }
             )
         }
 
@@ -351,7 +328,7 @@ fun DeviceCaptureTab(
                         onClick = onRefreshReport,
                         enabled = connected,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.heightIn(min = 36.dp)
                     ) {
                         Text("Refresh", style = MaterialTheme.typography.labelSmall)
                     }
@@ -396,7 +373,7 @@ fun DeviceCaptureTab(
                         onClick = onStartRecording,
                         enabled = connected && !recording,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Start")
                     }
@@ -404,7 +381,7 @@ fun DeviceCaptureTab(
                         onClick = onStopRecording,
                         enabled = connected && recording,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Stop")
                     }
@@ -416,7 +393,7 @@ fun DeviceCaptureTab(
                         onClick = onStartCaptureExport,
                         enabled = connected && !exporting,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Export to phone")
                     }
@@ -424,7 +401,7 @@ fun DeviceCaptureTab(
                         onClick = onCancelCaptureExport,
                         enabled = exporting,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Cancel")
                     }
@@ -472,7 +449,7 @@ fun DeviceCaptureTab(
                         onClick = onReloadConfig,
                         enabled = connected,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Reload config")
                     }
@@ -480,7 +457,7 @@ fun DeviceCaptureTab(
                         onClick = onClearDiagnostics,
                         enabled = connected,
                         shape = PulseShiftShapeTokens.Control,
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Text("Clear diag history")
                     }
@@ -489,7 +466,7 @@ fun DeviceCaptureTab(
                     onClick = onRestart,
                     enabled = connected,
                     shape = PulseShiftShapeTokens.Control,
-                    modifier = Modifier.height(38.dp)
+                    modifier = Modifier.heightIn(min = 38.dp)
                 ) {
                     Text("Restart ESP32...")
                 }
@@ -964,7 +941,7 @@ fun LogMessageCard(
                         if (item.isHistorical) {
                             Text(
                                 text = "HISTORICAL",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier
                                     .clip(PulseShiftShapeTokens.Micro)

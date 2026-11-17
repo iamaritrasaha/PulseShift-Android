@@ -1,6 +1,5 @@
 package com.pulseshift.app.ui.screens.lighting
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -11,6 +10,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,6 +98,7 @@ private val LIGHTING_TABS = listOf(
  * Displays interactive live WS2812B rail preview, segmented pixel selector,
  * modern pill tabs, and explicit controller flash commit actions.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LightingScreen(
     viewModel: LightingViewModel,
@@ -112,15 +116,11 @@ fun LightingScreen(
     val syncErrors = viewModel.lightingSyncError
     val feedbackMessages = viewModel.actionFeedback
 
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var newPresetName by remember { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
-
-    BackHandler {
-        onNavigateBack()
-    }
 
     LaunchedEffect(Unit) {
         syncErrors.collect { snackbar.showSnackbar(it) }
@@ -200,60 +200,56 @@ fun LightingScreen(
         ) {
             // 1. Header & Live Controller Status
             item {
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = onNavigateBack
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                    contentDescription = "Back to Dashboard"
-                                )
-                            }
-                            Spacer(Modifier.width(PulseShiftSpacing.Micro))
-                            Column {
-                                Text(
-                                    "Lighting Studio",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = when {
-                                        lighting.isSyncUnknown -> "Active Rev ? · Controller Sync Unknown"
-                                        lighting.isPendingSync -> "Waiting for configuration readback"
-                                        lighting.isHardwareConfirmed && snapshot != null -> "Active Rev ${snapshot!!.activeRevision} · Calibration " +
-                                                if (snapshot!!.calibrationVerified) "VERIFIED" else "UNVERIFIED"
-                                        else -> "Configuration readback unavailable"
-                                    },
-                                    style = PulseShiftMonoTiny,
-                                    color = if (lighting.isSyncUnknown) HardwareAmberWarning else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            StatusPill(
-                                text = when {
-                                    !isAuthenticated -> "UNAUTHENTICATED"
-                                    lighting.isSyncUnknown -> "SYNC UNKNOWN"
-                                    lighting.isPendingSync -> "SYNC IN PROGRESS"
-                                    unsaved -> "RAM ONLY (UNSAVED)"
-                                    isNvsConfirmed -> "PERSISTED (NVS)"
-                                    else -> "NVS SAVE UNCONFIRMED"
-                                },
-                                color = when {
-                                    !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning
-                                    else -> HardwareGreenVerified
-                                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onNavigateBack
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back to Dashboard"
                             )
-                            if (isAuthenticated) {
-                                StatusPill(text = "AUTH OK", color = HardwareGreenVerified)
+                        }
+                        Spacer(Modifier.width(PulseShiftSpacing.Micro))
+                        Column {
+                            Text(
+                                "Lighting Studio",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when {
+                                    lighting.isSyncUnknown -> "Active Rev ? · Controller Sync Unknown"
+                                    lighting.isPendingSync -> "Waiting for configuration readback"
+                                    lighting.isHardwareConfirmed && snapshot != null -> "Active Rev ${snapshot!!.activeRevision} · Calibration " +
+                                            if (snapshot!!.calibrationVerified) "VERIFIED" else "UNVERIFIED"
+                                    else -> "Configuration readback unavailable"
+                                },
+                                style = PulseShiftMonoTiny,
+                                color = if (lighting.isSyncUnknown) HardwareAmberWarning else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        StatusPill(
+                            text = when {
+                                !isAuthenticated -> "UNAUTHENTICATED"
+                                lighting.isSyncUnknown -> "SYNC UNKNOWN"
+                                lighting.isPendingSync -> "SYNC IN PROGRESS"
+                                unsaved -> "RAM ONLY (UNSAVED)"
+                                isNvsConfirmed -> "PERSISTED (NVS)"
+                                else -> "NVS SAVE UNCONFIRMED"
+                            },
+                            color = when {
+                                !isAuthenticated || lighting.isSyncUnknown || unsaved || !isNvsConfirmed -> HardwareAmberWarning
+                                else -> HardwareGreenVerified
                             }
+                        )
+                        if (isAuthenticated) {
+                            StatusPill(text = "AUTH OK", color = HardwareGreenVerified)
                         }
                     }
                 }
@@ -392,12 +388,12 @@ fun LightingScreen(
                                 color = animatedColor,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(40.dp)
+                                    .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .clickable { tab = index }
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
                                     horizontalArrangement = Arrangement.Center,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -476,7 +472,7 @@ fun LightingScreen(
                             shape = PulseShiftShapeTokens.Control,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(PulseShiftSpacing.MinTouchTarget)
+                                .heightIn(min = PulseShiftSpacing.MinTouchTarget)
                         ) {
                             if (isBusy) {
                                 CircularProgressIndicator(
@@ -513,9 +509,9 @@ fun LightingScreen(
                                 shape = PulseShiftShapeTokens.Control,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .heightIn(min = 44.dp)
                             ) {
-                                Text("Save as Preset", maxLines = 1)
+                                Text("Save as Preset")
                             }
 
                             OutlinedButton(
@@ -523,11 +519,11 @@ fun LightingScreen(
                                 shape = PulseShiftShapeTokens.Control,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .heightIn(min = 44.dp)
                             ) {
                                 Icon(Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Preset Library", maxLines = 1)
+                                Text("Preset Library")
                             }
                         }
 
@@ -540,11 +536,11 @@ fun LightingScreen(
                                 shape = PulseShiftShapeTokens.Control,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .heightIn(min = 44.dp)
                             ) {
                                 Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Reload Flash", maxLines = 1)
+                                Text("Reload Flash")
                             }
 
                             OutlinedButton(
@@ -552,11 +548,11 @@ fun LightingScreen(
                                 shape = PulseShiftShapeTokens.Control,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .heightIn(min = 44.dp)
                             ) {
                                 Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Defaults", maxLines = 1)
+                                Text("Defaults")
                             }
                         }
                     }

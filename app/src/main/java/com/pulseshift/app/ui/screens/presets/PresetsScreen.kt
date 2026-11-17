@@ -7,17 +7,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.res.painterResource
@@ -90,8 +95,7 @@ import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PresetsScreen(
-    viewModel: PresetsViewModel,
-    onNavigateBack: () -> Unit = {}
+    viewModel: PresetsViewModel
 ) {
     val presets by viewModel.presets.collectAsState()
     val isBusy by viewModel.isBusy.collectAsState()
@@ -115,8 +119,7 @@ fun PresetsScreen(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
 
-            // Top Header: Title & Action Controls (Owned cleanly inside screen, no double top-bar)
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(
@@ -125,22 +128,13 @@ fun PresetsScreen(
                         top = PulseShiftSpacing.ScreenVertical,
                         bottom = PulseShiftSpacing.SmallGap
                     ),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Presets Library",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(Modifier.height(PulseShiftSpacing.Micro))
-                    Text(
-                        text = "Custom shift patterns and color profiles",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Presets Library",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallGap),
@@ -150,7 +144,7 @@ fun PresetsScreen(
                         onClick = { showRestoreDialog = true },
                         shape = PulseShiftShapeTokens.Control,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(PulseShiftSpacing.Micro))
@@ -161,7 +155,7 @@ fun PresetsScreen(
                         onClick = { showCreateSheet = true },
                         shape = PulseShiftShapeTokens.Control,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.heightIn(min = 38.dp)
                     ) {
                         Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(PulseShiftSpacing.Micro))
@@ -195,7 +189,7 @@ fun PresetsScreen(
                         Button(
                             onClick = { viewModel.restoreDefaults() },
                             shape = PulseShiftShapeTokens.Control,
-                            modifier = Modifier.height(PulseShiftSpacing.MinTouchTarget)
+                            modifier = Modifier.heightIn(min = PulseShiftSpacing.MinTouchTarget)
                         ) {
                             Text("Load Shipped Defaults")
                         }
@@ -382,7 +376,7 @@ fun PresetListItem(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(28.dp)
+                    .heightIn(min = 28.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color.Black.copy(alpha = 0.4f))
                     .padding(horizontal = 8.dp),
@@ -408,7 +402,7 @@ fun PresetListItem(
             ) {
                 Button(
                     onClick = onApply,
-                    modifier = Modifier.height(PulseShiftSpacing.MinTouchTarget),
+                    modifier = Modifier.heightIn(min = PulseShiftSpacing.MinTouchTarget),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
@@ -462,7 +456,7 @@ fun PresetListItem(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun CreatePresetSheet(
     onDismiss: () -> Unit,
@@ -498,6 +492,7 @@ private fun CreatePresetSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = PulseShiftSpacing.ScreenHorizontal)
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
         ) {
@@ -513,7 +508,7 @@ private fun CreatePresetSheet(
             )
 
             Text("Effect Pattern", style = MaterialTheme.typography.labelMedium)
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel)
             ) {
@@ -524,12 +519,9 @@ private fun CreatePresetSheet(
                         label = {
                             Text(
                                 effect.displayName,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                softWrap = false
+                                style = MaterialTheme.typography.labelSmall
                             )
-                        },
-                        modifier = Modifier.weight(1f)
+                        }
                     )
                 }
             }
@@ -555,7 +547,7 @@ private fun CreatePresetSheet(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(palName, style = MaterialTheme.typography.bodyMedium)
+                            Text(palName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 colors.forEach { c ->
                                     Box(
@@ -594,7 +586,7 @@ private fun CreatePresetSheet(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(PulseShiftSpacing.MinTouchTarget)
+                    .heightIn(min = PulseShiftSpacing.MinTouchTarget)
             ) {
                 Text("Save Preset to Library")
             }

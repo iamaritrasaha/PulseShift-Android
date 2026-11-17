@@ -4,7 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,11 +34,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pulseshift.app.ui.navigation.Screen
-import com.pulseshift.app.ui.theme.PulseShiftMonoTiny
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 
 /**
@@ -70,9 +74,10 @@ fun PulseShiftBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .selectableGroup(),
                 horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 screens.forEach { screen ->
                     val isSelected = currentRoute == screen.route
@@ -89,7 +94,7 @@ fun PulseShiftBottomBar(
                     )
                     val textTint by animateColorAsState(
                         targetValue = if (isSelected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         animationSpec = tween(durationMillis = 180),
                         label = "textTint"
                     )
@@ -98,22 +103,18 @@ fun PulseShiftBottomBar(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .weight(1f)
-                            .height(PulseShiftSpacing.MinTouchTarget)
+                            .heightIn(min = PulseShiftSpacing.MinTouchTarget)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(
+                            .selectable(
+                                selected = isSelected,
+                                role = Role.Tab,
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(bounded = true, radius = 28.dp),
-                                onClick = {
-                                    // Tapping the already-selected tab must not
-                                    // re-run navigate(popUpTo/restoreState): the
-                                    // redundant call churns the back stack for
-                                    // nothing and used to interrupt in-flight
-                                    // destination transitions.
-                                    if (!isSelected) onNavigate(screen)
-                                }
+                                onClick = { onNavigate(screen) }
                             )
-                            .padding(vertical = 2.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
+                            .semantics { contentDescription = screen.title }
+                            .padding(vertical = 3.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)
                     ) {
                         // Top glowing active indicator pill
                         Box(
@@ -131,7 +132,7 @@ fun PulseShiftBottomBar(
                         screen.icon?.let { iconVector ->
                             Icon(
                                 imageVector = iconVector,
-                                contentDescription = screen.title,
+                                contentDescription = null,
                                 modifier = Modifier
                                     .size(22.dp)
                                     .scale(animatedScale),
@@ -139,20 +140,20 @@ fun PulseShiftBottomBar(
                             )
                         }
 
-                        // Monospace micro-label
+                        // Give scaled labels room to wrap within their tab.
                         Text(
                             text = when (screen) {
-                                Screen.Home -> "DASH"
-                                Screen.Lighting -> "LIGHTS"
-                                Screen.Presets -> "PRESETS"
-                                Screen.Diagnostics -> "DIAGS"
+                                Screen.Home -> "Dash"
+                                Screen.Lighting -> "Lights"
+                                Screen.Presets -> "Presets"
+                                Screen.Diagnostics -> "Diags"
                                 else -> screen.title.uppercase()
                             },
-                            style = PulseShiftMonoTiny,
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            letterSpacing = 0.8.sp,
+                            textAlign = TextAlign.Center,
                             color = textTint,
-                            maxLines = 1
+                            maxLines = 2
                         )
                     }
                 }

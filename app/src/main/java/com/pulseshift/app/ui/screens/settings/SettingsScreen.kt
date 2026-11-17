@@ -27,7 +27,6 @@ import com.pulseshift.app.R
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.DarkMode
@@ -41,7 +40,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -52,7 +50,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -67,6 +64,7 @@ import com.pulseshift.app.domain.model.OtaUpdateState
 import com.pulseshift.app.domain.model.OTA_MAX_PACKAGE_BYTES
 import com.pulseshift.app.ui.theme.PulseShiftRadius
 import com.pulseshift.app.ui.theme.PulseShiftShapeTokens
+import com.pulseshift.app.ui.components.PulseShiftDetailTopBar
 import com.pulseshift.app.ui.theme.PulseShiftSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -123,16 +121,9 @@ fun SettingsScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
+            PulseShiftDetailTopBar(
                 title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.size(PulseShiftSpacing.MinTouchTarget)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                }
+                onBack = onNavigateBack
             )
         }
     ) { innerPadding ->
@@ -356,7 +347,10 @@ fun SettingsScreen(
                     }
                 },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text("PulseShift is a native Android companion application for physical motorcycle smart lighting and shift-light configuration.")
                         Text("• Author: Designed & Engineered by Aritra Saha")
                         Text("• Copyright: © 2026 Aritra Saha. All rights reserved.")
