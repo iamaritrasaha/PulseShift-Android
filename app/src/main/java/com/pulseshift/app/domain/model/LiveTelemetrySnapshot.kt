@@ -48,8 +48,9 @@ data class LiveTelemetrySnapshot(
 
             val rpm = telemetry?.takeIf { isCurrent(it.timestampReceivedMs, RPM_PACKET_MAX_AGE_MS) }
             val can = health?.takeIf { isCurrent(it.timestampReceivedMs, HEALTH_PACKET_MAX_AGE_MS) }
-            val candidateValid = rpm?.isRpmAvailable == true && !rpm.isStale &&
-                rpm.rpmSampleAgeMs <= RPM_PACKET_MAX_AGE_MS
+            val candidateValid = rpm?.let {
+                it.isRpmAvailable && it.rpmSampleAgeMs <= RPM_PACKET_MAX_AGE_MS
+            } == true
 
             return LiveTelemetrySnapshot(
                 receivedFrames = rpm?.totalCanFramesReceived,
