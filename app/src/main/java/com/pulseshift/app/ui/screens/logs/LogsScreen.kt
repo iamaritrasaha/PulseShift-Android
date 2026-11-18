@@ -3,6 +3,8 @@ package com.pulseshift.app.ui.screens.logs
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1009,11 +1011,31 @@ fun LogMessageCard(
 
 private fun shareLogContent(context: Context, content: String, mimeType: String, filename: String) {
     try {
-        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            putExtra(Intent.EXTRA_TEXT, content)
-            type = mimeType
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val exportFile = File(exportDir, filename)
+        exportFile.writeText(content)
+        val uri = try {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                exportFile
+            )
+        } catch (_: Exception) {
+            null
         }
-        val shareIntent = Intent.createChooser(sendIntent, "Share $filename")
+
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            if (uri != null) {
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+                putExtra(Intent.EXTRA_TEXT, content.take(50_000))
+            }
+        }
+        val shareIntent = Intent.createChooser(sendIntent, "Share $filename").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         context.startActivity(shareIntent)
     } catch (e: Exception) {
         Toast.makeText(context, "Error sharing file: ${e.message}", Toast.LENGTH_SHORT).show()

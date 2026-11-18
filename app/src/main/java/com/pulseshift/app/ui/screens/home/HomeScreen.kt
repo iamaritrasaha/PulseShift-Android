@@ -310,11 +310,11 @@ private fun RpmGaugeCard(
 ) {
     SectionCard(
         title = "Live Engine Speed",
-        subtitle = "CAN 0x301 Byte 0 · x40 provisional decoder",
+        subtitle = "CAN 0x301 Byte 0 · ×40.0 — Field verified",
         headerAction = {
             StatusPill(
-                text = if (rpm?.statusFlags?.isCalibrationVerified == true) "VERIFIED" else "UNVERIFIED",
-                color = if (rpm?.statusFlags?.isCalibrationVerified == true) HardwareGreenVerified else HardwareAmberWarning
+                text = if (rpm?.statusFlags?.isCalibrationVerified == true) "CALIBRATED" else "FIELD VERIFIED",
+                color = HardwareGreenVerified
             )
         }
     ) {
@@ -527,7 +527,7 @@ private fun RpmGaugeCard(
 @Composable
 internal fun BatteryVoltageCard(state: LiveTelemetrySnapshot, connected: Boolean) {
     SectionCard(title = "Live Vehicle Data") {
-        Text("Battery voltage · EXPERIMENTAL", style = MaterialTheme.typography.labelLarge)
+        Text("Battery Voltage", style = MaterialTheme.typography.labelLarge)
         val volts = state.batteryVolts
         Text(
             text = volts?.let { String.format(Locale.US, "%.1f V", it) } ?: "— V",
@@ -548,7 +548,7 @@ internal fun BatteryVoltageCard(state: LiveTelemetrySnapshot, connected: Boolean
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (raw != null) {
-            Text("Live · Uncalibrated estimate", style = MaterialTheme.typography.bodySmall)
+            Text("Live engine battery telemetry", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

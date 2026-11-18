@@ -31,4 +31,15 @@ data class LightingState(
 
     val isDirectionReversed: Boolean
         get() = ledDirection == 1
+
+    fun matchesPreset(preset: Preset): Boolean {
+        if (effect != preset.effect) return false
+        if (brightness != preset.brightness) return false
+        if (effectSpeed != preset.effectSpeed) return false
+        if (ledDirection != preset.ledDirection) return false
+        if (startupAnimation != preset.startupAnimation) return false
+        if (startupDurationMs != preset.startupDurationMs) return false
+        if (ledColors != preset.ledColors) return false
+        return true
+    }
 }

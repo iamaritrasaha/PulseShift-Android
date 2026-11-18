@@ -164,45 +164,70 @@ class PulseShiftBleLifecycleTest {
         manager.setLastConnectedAddressForTesting("AA:BB:CC:DD:EE:FF")
         manager.setAutoReconnectEnabled(true)
 
-        // Attempt 1: Unexpected disconnect
-        manager.getGattCallback().onConnectionStateChange(mockGatt, 19, BluetoothProfile.STATE_DISCONNECTED)
-        assertEquals(1, manager.getReconnectAttempts())
-        assertTrue(manager.isReconnecting.value)
-        assertFalse(manager.isUserInitiatedDisconnect())
+        // Attempts 1 to 10: Unexpected disconnects
+        for (attempt in 1..10) {
+            manager.setActiveGattForTesting(mockGatt)
+            manager.getGattCallback().onConnectionStateChange(mockGatt, 133, BluetoothProfile.STATE_DISCONNECTED)
+            assertEquals(attempt, manager.getReconnectAttempts())
+            assertTrue(manager.isReconnecting.value)
+            assertFalse(manager.isUserInitiatedDisconnect())
+        }
 
-        // Attempt 2: Unexpected disconnect
+        // Attempt 11: Exceeds 10 attempts -> give up
         manager.setActiveGattForTesting(mockGatt)
         manager.getGattCallback().onConnectionStateChange(mockGatt, 133, BluetoothProfile.STATE_DISCONNECTED)
-        assertEquals(2, manager.getReconnectAttempts())
-        assertTrue(manager.isReconnecting.value)
-        assertFalse(manager.isUserInitiatedDisconnect())
-
-        // Attempt 3: Unexpected disconnect
-        manager.setActiveGattForTesting(mockGatt)
-        manager.getGattCallback().onConnectionStateChange(mockGatt, 8, BluetoothProfile.STATE_DISCONNECTED)
-        assertEquals(3, manager.getReconnectAttempts())
-        assertTrue(manager.isReconnecting.value)
-
-        // Attempt 4: Unexpected disconnect
-        manager.setActiveGattForTesting(mockGatt)
-        manager.getGattCallback().onConnectionStateChange(mockGatt, 62, BluetoothProfile.STATE_DISCONNECTED)
-        assertEquals(4, manager.getReconnectAttempts())
-        assertTrue(manager.isReconnecting.value)
-
-        // Attempt 5: Unexpected disconnect
-        manager.setActiveGattForTesting(mockGatt)
-        manager.getGattCallback().onConnectionStateChange(mockGatt, 133, BluetoothProfile.STATE_DISCONNECTED)
-        assertEquals(5, manager.getReconnectAttempts())
-        assertTrue(manager.isReconnecting.value)
-
-        // Attempt 6: Exceeds 5 attempts -> give up
-        manager.setActiveGattForTesting(mockGatt)
-        manager.getGattCallback().onConnectionStateChange(mockGatt, 133, BluetoothProfile.STATE_DISCONNECTED)
-        assertFalse("Reconnection must give up after 5 attempts", manager.isReconnecting.value)
+        assertFalse("Reconnection must give up after 10 attempts", manager.isReconnecting.value)
         assertTrue(
-            "Error must state that reconnection gave up after 5 attempts",
-            manager.connectionError.value?.contains("gave up after 5 attempts") == true
+            "Error must state that reconnection gave up after 10 attempts",
+            manager.connectionError.value?.contains("gave up after 10 attempts") == true
         )
+    }
+
+    @Test
+    fun testBoundedExponentialBackoffCalculation() {
+        val manager = createTestBleManager()
+        // Without jitter for exact base assertions
+        assertEquals(1000L, manager.calculateBackoffMs(1, applyJitter = false))
+        assertEquals(2000L, manager.calculateBackoffMs(2, applyJitter = false))
+        assertEquals(4000L, manager.calculateBackoffMs(3, applyJitter = false))
+        assertEquals(8000L, manager.calculateBackoffMs(4, applyJitter = false))
+        assertEquals(16000L, manager.calculateBackoffMs(5, applyJitter = false))
+        assertEquals(30000L, manager.calculateBackoffMs(6, applyJitter = false))
+        assertEquals(30000L, manager.calculateBackoffMs(7, applyJitter = false))
+        assertEquals(30000L, manager.calculateBackoffMs(10, applyJitter = false))
+
+        // With jitter: baseMs <= backoff <= baseMs + 1000L
+        for (attempt in 1..10) {
+            val withJitter = manager.calculateBackoffMs(attempt, applyJitter = true)
+            val base = manager.calculateBackoffMs(attempt, applyJitter = false)
+            assertTrue("Backoff with jitter ($withJitter) must be >= base ($base)", withJitter >= base)
+            assertTrue("Backoff with jitter ($withJitter) must be <= base + 1000 (${base + 1000})", withJitter <= base + 1000L)
+            assertTrue("Backoff with jitter ($withJitter) must be <= 31000", withJitter <= 31000L)
+        }
+    }
+
+    @Test
+    fun testBluetoothAdapterStateOffAndOn() {
+        val manager = createTestBleManager()
+        val mockGatt = mock(BluetoothGatt::class.java)
+        val mockDevice = mock(BluetoothDevice::class.java)
+        `when`(mockDevice.address).thenReturn("AA:BB:CC:DD:EE:FF")
+        `when`(mockGatt.device).thenReturn(mockDevice)
+
+        manager.setActiveGattForTesting(mockGatt)
+        manager.setLastConnectedAddressForTesting("AA:BB:CC:DD:EE:FF")
+        manager.setAutoReconnectEnabled(true)
+
+        // Turn Bluetooth off
+        manager.triggerBluetoothAdapterStateChangeForTesting(android.bluetooth.BluetoothAdapter.STATE_OFF)
+        assertEquals(BleConnectionState.BLUETOOTH_DISABLED, manager.connectionState.value)
+        assertFalse(manager.isReconnecting.value)
+        assertEquals("AA:BB:CC:DD:EE:FF", manager.getLastConnectedAddress())
+
+        // Turn Bluetooth back on -> should auto-reconnect
+        manager.triggerBluetoothAdapterStateChangeForTesting(android.bluetooth.BluetoothAdapter.STATE_ON)
+        assertTrue("Turning Bluetooth on must trigger reconnection when auto-reconnect is enabled", manager.isReconnecting.value)
+        assertEquals(1, manager.getReconnectAttempts())
     }
 
     @Test

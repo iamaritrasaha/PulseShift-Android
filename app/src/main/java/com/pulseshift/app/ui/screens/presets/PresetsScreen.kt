@@ -80,6 +80,7 @@ import com.pulseshift.app.ui.components.ConfirmDialog
 import com.pulseshift.app.ui.components.StatusPill
 import com.pulseshift.app.ui.components.StepperControl
 import com.pulseshift.app.ui.theme.DarkTextSecondary
+import com.pulseshift.app.ui.theme.HardwareAmberWarning
 import com.pulseshift.app.ui.theme.HardwareGreenVerified
 import com.pulseshift.app.ui.theme.HardwareRedError
 import com.pulseshift.app.ui.theme.PulseShiftMonoMedium
@@ -99,6 +100,13 @@ fun PresetsScreen(
 ) {
     val presets by viewModel.presets.collectAsState()
     val isBusy by viewModel.isBusy.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val lightingState by viewModel.lightingState.collectAsState()
+    val isConnected = connectionState in setOf(
+        com.pulseshift.app.data.ble.BleConnectionState.READY,
+        com.pulseshift.app.data.ble.BleConnectionState.RECEIVING_TELEMETRY,
+        com.pulseshift.app.data.ble.BleConnectionState.CONNECTED_WAITING_FOR_DATA
+    )
     val snackbar = remember { SnackbarHostState() }
 
     var showCreateSheet by remember { mutableStateOf(false) }
@@ -207,8 +215,13 @@ fun PresetsScreen(
                     verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)
                 ) {
                     items(presets, key = { it.id }) { preset ->
+                        val isActive = isConnected && lightingState.matchesPreset(preset)
                         PresetListItem(
                             preset = preset,
+                            isConnected = isConnected,
+                            isActiveOnController = isActive,
+                            isHardwareConfirmed = lightingState.isHardwareConfirmed,
+                            isBusy = isBusy,
                             onApply = { viewModel.applyPreset(preset) },
                             onDuplicate = { viewModel.duplicatePreset(preset) },
                             onRename = if (preset.isCustom) {
@@ -318,6 +331,10 @@ fun PresetsScreen(
 @Composable
 fun PresetListItem(
     preset: Preset,
+    isConnected: Boolean = false,
+    isActiveOnController: Boolean = false,
+    isHardwareConfirmed: Boolean = false,
+    isBusy: Boolean = false,
     onApply: () -> Unit,
     onDuplicate: () -> Unit,
     onRename: (() -> Unit)?,
@@ -366,9 +383,29 @@ fun PresetListItem(
                         )
                     }
 
+                val statusText: String
+                val statusColor: Color
+                when {
+                    isActiveOnController && isHardwareConfirmed -> {
+                        statusText = "ACTIVE ON ESP32 (NVS)"
+                        statusColor = HardwareGreenVerified
+                    }
+                    isActiveOnController -> {
+                        statusText = "ACTIVE IN RAM (UNSAVED)"
+                        statusColor = HardwareAmberWarning
+                    }
+                    preset.isCustom -> {
+                        statusText = "STORED ON PHONE"
+                        statusColor = MaterialTheme.colorScheme.primary
+                    }
+                    else -> {
+                        statusText = "BUILT-IN"
+                        statusColor = MaterialTheme.colorScheme.outline
+                    }
+                }
                 StatusPill(
-                    text = if (preset.isCustom) "CUSTOM" else "BUILT-IN",
-                    color = if (preset.isCustom) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    text = statusText,
+                    color = statusColor
                 )
             }
 
@@ -402,6 +439,7 @@ fun PresetListItem(
             ) {
                 Button(
                     onClick = onApply,
+                    enabled = isConnected && !isBusy,
                     modifier = Modifier.heightIn(min = PulseShiftSpacing.MinTouchTarget),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -410,7 +448,7 @@ fun PresetListItem(
                 ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
-                    Text("Apply & Save to ESP32")
+                    Text(if (isConnected) "Apply & Save to ESP32" else "Connect ESP32 to Apply")
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro)) {

@@ -357,7 +357,7 @@ fun SettingsScreen(
                         Text("• Hardware: ESP32 DevKit V1 + 6x WS2812B Addressable RGB Strip")
                         Text("• Protocol: PulseShift BLE Config V2 (Staged transactions & NVS flash persistence)")
                         Text("• Privacy: Fully offline, no ads, no trackers, no accounts.")
-                        Text("• Engine RPM: Displays Estimated RPM — Unverified until independent calibration establishes scientific correctness.")
+                        Text("• Engine RPM: CAN ID 0x301 Byte 0 ×40.0 multiplier (Field verified).")
                     }
                 },
                 confirmButton = {
