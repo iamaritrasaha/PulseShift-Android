@@ -750,9 +750,14 @@ fun StartupPanel(
 ) {
     val device by viewModel.connectedDevice.collectAsState()
     val supportedAnims = device?.capabilities?.supportedStartupAnimations ?: StartupAnimation.entries.toSet()
+    val loopingSupported = device?.capabilities?.supportsLoopingStartup == true
+    val isLooping = loopingSupported && lighting.isStartupLooping
+    fun encodedDuration(ms: Int, animation: StartupAnimation = lighting.startupAnimation, loop: Boolean = isLooping): Int =
+        (ms.coerceIn(100, 10000) and 0x7FFF) or
+            (if (loopingSupported && loop && animation != StartupAnimation.NONE) 0x8000 else 0)
 
-    var durationMs by remember(lighting.startupDurationMs) {
-        mutableFloatStateOf(lighting.startupDurationMs.toFloat())
+    var durationMs by remember(lighting.startupCycleDurationMs) {
+        mutableFloatStateOf(lighting.startupCycleDurationMs.toFloat())
     }
 
     Column(
@@ -761,7 +766,7 @@ fun StartupPanel(
     ) {
         SectionCard(
             title = "Power-On Ignition Animation",
-            subtitle = "Plays once upon ESP32 startup before engaging live tachometer illumination"
+            subtitle = "Choose once or continuous looping; active engine RPM and safety signals always take precedence"
         ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StartupAnimation.entries.filter { it in supportedAnims }.forEach { animation ->
@@ -785,7 +790,7 @@ fun StartupPanel(
                         .fillMaxWidth()
                         .clip(PulseShiftShapeTokens.Card)
                         .clickable {
-                            viewModel.setStartupAnimation(animation, durationMs.toInt())
+                            viewModel.setStartupAnimation(animation, encodedDuration(durationMs.toInt(), animation))
                         }
                 ) {
                     Row(
@@ -845,7 +850,40 @@ fun StartupPanel(
         }
     }
 
-    val effectiveMin = minOf(500, lighting.startupDurationMs).coerceAtLeast(100)
+    SectionCard(
+        title = "Continuous Startup Animation",
+        subtitle = "Repeat this animation while the motorcycle is stationary"
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Loop continuously", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (loopingSupported)
+                        "Repeat every " + String.format(Locale.US, "%.1f", lighting.startupCycleDurationMs / 1000f) +
+                            "s; active RPM, faults and power-off override the loop."
+                    else "Requires firmware with continuous startup animation support.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = isLooping,
+                onCheckedChange = { enabled ->
+                    viewModel.setStartupAnimation(
+                        lighting.startupAnimation,
+                        encodedDuration(durationMs.toInt(), loop = enabled)
+                    )
+                },
+                enabled = loopingSupported && lighting.startupAnimation != StartupAnimation.NONE
+            )
+        }
+    }
+
+    val effectiveMin = minOf(500, lighting.startupCycleDurationMs).coerceAtLeast(100)
 
     SectionCard(
         title = "Animation Duration",
@@ -885,7 +923,7 @@ fun StartupPanel(
                             onClick = {
                                 val next = (durationMs.toInt() - 250).coerceAtLeast(effectiveMin)
                                 durationMs = next.toFloat()
-                                viewModel.setStartupAnimation(lighting.startupAnimation, next)
+                                viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(next))
                             },
                             enabled = durationMs.toInt() > effectiveMin,
                             modifier = Modifier.size(36.dp)
@@ -897,7 +935,7 @@ fun StartupPanel(
                             onClick = {
                                 val next = (durationMs.toInt() + 250).coerceAtMost(10000)
                                 durationMs = next.toFloat()
-                                viewModel.setStartupAnimation(lighting.startupAnimation, next)
+                                viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(next))
                             },
                             enabled = durationMs.toInt() < 10000,
                             modifier = Modifier.size(36.dp)
@@ -912,7 +950,7 @@ fun StartupPanel(
                 value = durationMs.coerceIn(effectiveMin.toFloat(), 10000f),
                 onValueChange = { durationMs = it },
                 onValueChangeFinished = {
-                    viewModel.setStartupAnimation(lighting.startupAnimation, durationMs.toInt())
+                    viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(durationMs.toInt()))
                 },
                 valueRange = effectiveMin.toFloat()..10000f,
                 modifier = Modifier.fillMaxWidth()
@@ -928,7 +966,7 @@ fun StartupPanel(
                     Surface(
                         onClick = {
                             durationMs = ms.toFloat()
-                            viewModel.setStartupAnimation(lighting.startupAnimation, ms)
+                            viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(ms))
                         },
                         shape = RoundedCornerShape(8.dp),
                         color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
