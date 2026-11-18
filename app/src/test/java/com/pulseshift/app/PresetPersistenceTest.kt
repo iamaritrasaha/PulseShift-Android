@@ -279,7 +279,7 @@ class PresetPersistenceTest {
                 PresetApplyResult.PERSISTED -> assertTrue(message.contains("saved to ESP32 NVS"))
                 PresetApplyResult.READBACK_CONFIRMED -> {
                     assertTrue(message.contains("active in RAM"))
-                    assertTrue(message.contains("flash save unconfirmed"))
+                    assertTrue(message.contains("NVS save unconfirmed"))
                 }
                 PresetApplyResult.APPLIED_NEEDS_READBACK -> assertTrue(message.contains("resync and save"))
                 PresetApplyResult.COMMIT_UNKNOWN -> assertTrue(message.contains("commit unverified"))
