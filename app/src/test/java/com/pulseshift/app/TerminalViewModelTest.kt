@@ -255,8 +255,8 @@ class TerminalViewModelTest {
 
         val lastLine = viewModel.lines.value.last()
         assertEquals(TerminalLineType.ACK, lastLine.type)
-        assertTrue(lastLine.text.contains("[ACK] Effect 5: Provisional Preview"))
-        assertTrue(lastLine.text.contains("UNVERIFIED live preview"))
+        assertTrue(lastLine.text.contains("[ACK] Effect 5: Provisional Live Preview"))
+        assertTrue(lastLine.text.contains("Live CAN RPM preview (×40.0 field verified)"))
     }
 
     @Test
@@ -280,8 +280,31 @@ class TerminalViewModelTest {
         val lastLine = viewModel.lines.value.last()
         assertEquals(TerminalLineType.ERROR, lastLine.type)
         assertTrue("Effect 4 must be rejected when unverified", lastLine.text.contains("Effect 4 (RPM Bar) rejected"))
-        assertTrue("Error must advise using Effect 5", lastLine.text.contains("Use Effect 5 for unverified preview"))
+        assertTrue("Error must advise using Effect 5", lastLine.text.contains("Use Effect 5 for ×40.0 field-verified live preview"))
         assertFalse("Must NOT announce success before firmware ACK", viewModel.lines.value.any { it.text.contains("[ACK] Effect 4") })
+    }
+
+    @Test
+    fun testDiagnosticLogsBurstCollectionDoesNotDropMessages() {
+        val messages = (1..10).map { i ->
+            DiagnosticLogMessage(
+                id = "msg-$i",
+                messageId = i,
+                timestampMs = 1000L * i,
+                messageText = "Log event #$i",
+                severity = LogSeverity.INFO,
+                isHistorical = false,
+                isCorruptOrIncomplete = false
+            )
+        }
+        // BlePulseShiftRepository stores newest first
+        repository._diagnosticLogMessages.value = messages.reversed()
+
+        val logLines = viewModel.lines.value.filter { it.type == TerminalLineType.INFO }
+        assertEquals(10, logLines.size)
+        for (i in 1..10) {
+            assertTrue(logLines.any { it.text == "Log event #$i" })
+        }
     }
 
     @Test

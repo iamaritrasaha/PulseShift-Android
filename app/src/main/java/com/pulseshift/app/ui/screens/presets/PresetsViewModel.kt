@@ -23,6 +23,7 @@ class PresetsViewModel(
     val presets: StateFlow<List<Preset>> = repository.presets
     val connectionState = repository.connectionState
     val authState = repository.authState
+    val lightingState = repository.lightingState
 
     private val _userMessage = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()

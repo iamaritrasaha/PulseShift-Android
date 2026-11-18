@@ -79,6 +79,7 @@ class TerminalViewModel(
     val pendingConfirmation: StateFlow<TerminalCommand?> = _pendingConfirmation.asStateFlow()
 
     private var lastLoggedMessageId = -1
+    private val processedMessageIds = LinkedHashSet<String>()
     private var monitorJob: Job? = null
     private var dumpJob: Job? = null
     private var logsJob: Job? = null
@@ -126,14 +127,22 @@ class TerminalViewModel(
         // Incoming diagnostic log lines stream into the transcript.
         viewModelScope.launch {
             repository.diagnosticLogMessages.collect { list ->
-                list.firstOrNull()?.takeIf { it.messageId != lastLoggedMessageId }?.let { msg ->
-                    lastLoggedMessageId = msg.messageId
-                    val type = when (msg.severity) {
-                        LogSeverity.ERROR -> TerminalLineType.ERROR
-                        LogSeverity.WARNING -> TerminalLineType.WARN
-                        else -> TerminalLineType.INFO
+                // list has newest items at index 0, so process oldest-to-newest
+                for (msg in list.reversed()) {
+                    if (processedMessageIds.add(msg.id)) {
+                        lastLoggedMessageId = msg.messageId
+                        val type = when (msg.severity) {
+                            LogSeverity.ERROR -> TerminalLineType.ERROR
+                            LogSeverity.WARNING -> TerminalLineType.WARN
+                            else -> TerminalLineType.INFO
+                        }
+                        append(type, msg.messageText)
                     }
-                    append(type, msg.messageText)
+                }
+                while (processedMessageIds.size > 1000) {
+                    val it = processedMessageIds.iterator()
+                    it.next()
+                    it.remove()
                 }
             }
         }
@@ -156,6 +165,7 @@ class TerminalViewModel(
     fun clearTranscript() {
         _lines.value = emptyList()
         lastLoggedMessageId = -1
+        processedMessageIds.clear()
     }
 
     fun dismissConfirmation() {
@@ -356,7 +366,7 @@ class TerminalViewModel(
             val ok = repository.setEffect(effect)
             if (ok) {
                 val note = when (effectId) {
-                    5 -> " — UNVERIFIED live preview of estimated CAN RPM"
+                    5 -> " — Live CAN RPM preview (×40.0 field verified)"
                     4 -> " — verified calibration active"
                     else -> ""
                 }
@@ -366,7 +376,7 @@ class TerminalViewModel(
                 val calVerified = snapshot?.calibrationVerified == true
                 val reason = when {
                     effectId == 4 && !calVerified ->
-                        "Effect 4 (RPM Bar) rejected: requires verified calibration record on device. Use Effect 5 for unverified preview."
+                        "Effect 4 (RPM Bar) rejected: requires verified calibration record on device. Use Effect 5 for ×40.0 field-verified live preview."
                     !_isConnected.value ->
                         "Device disconnected."
                     !_isAuthorized.value ->

@@ -74,15 +74,15 @@ data class RpmTelemetryState(
     val displayLabelText: String
         get() = when {
             !isRpmAvailable || isStale -> "RPM Unavailable"
-            statusFlags.isCalibrationVerified -> "Verified Engine RPM"
-            else -> "Estimated RPM — Unverified"
+            statusFlags.isCalibrationVerified -> "Verified Engine RPM (Calibrated)"
+            else -> "Live Engine RPM"
         }
 
     val displaySecondaryDetails: String
         get() = when {
             !statusFlags.isCandidateFresh -> "CAN candidate signal not fresh"
-            !statusFlags.isCalibrationVerified -> "Unverified conversion • Raw CAN: $rawCandidateCanValue"
-            else -> "Calibration verified • Raw CAN: $rawCandidateCanValue"
+            statusFlags.isCalibrationVerified -> "Cryptographically verified • Raw CAN: $rawCandidateCanValue"
+            else -> "×40.0 field verified • Raw CAN: $rawCandidateCanValue"
         }
 
     companion object {

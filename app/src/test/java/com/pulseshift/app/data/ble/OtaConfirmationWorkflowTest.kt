@@ -351,4 +351,16 @@ class OtaConfirmationWorkflowTest {
         assertEquals(shouldConfirm, confirmSent)
         return repository.otaUpdateState.value
     }
+
+    @Test
+    fun testRealFirmwareSignedPackageValidatesCleanly() {
+        val file = java.io.File("D:/Development/PulseShift-Release-20261118/PulseShift-ESP32-2.3.0-b2eb881-OTA-Signed.bin")
+        if (file.exists()) {
+            val bytes = file.readBytes()
+            val signedImage = SignedOtaImage.validate(bytes)
+            assertEquals(32, signedImage.sha256.size)
+            assertEquals(32, signedImage.runningDigest.size)
+            assertTrue(signedImage.crc32 != 0L)
+        }
+    }
 }

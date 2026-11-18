@@ -14,11 +14,15 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import com.pulseshift.app.BuildConfig
+import com.pulseshift.app.data.ble.service.PulseShiftBleService
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.DeviceCapabilities
@@ -118,6 +122,9 @@ class PulseShiftBleManager(
         /** Fixed high sequence for manager-initiated snapshot fetches; the
          *  repository allocates 1..N sequentially, so no collision occurs. */
         internal const val SNAPSHOT_REQUEST_SEQ = 0xFF00
+
+        /** Bounded exponential retry attempt budget for companion-device operation. */
+        const val DEFAULT_MAX_RECONNECT_ATTEMPTS = 10
 
         fun gattStatusToString(status: Int): String {
             return when (status) {
@@ -284,6 +291,16 @@ class PulseShiftBleManager(
         }
     }
 
+    var maxReconnectAttempts: Int = DEFAULT_MAX_RECONNECT_ATTEMPTS
+    var jitterEnabled: Boolean = true
+
+    internal fun calculateBackoffMs(attempt: Int, applyJitter: Boolean = jitterEnabled): Long {
+        val exponent = minOf((attempt - 1).coerceAtLeast(0), 5)
+        val baseMs = minOf(1000L * (1L shl exponent), 30_000L)
+        val jitterMs = if (applyJitter) (Math.random() * 1000L).toLong() else 0L
+        return minOf(baseMs + jitterMs, 31_000L)
+    }
+
     private fun scheduleReconnect(errorDetail: String? = null) {
         if (!autoReconnectEnabled || userInitiatedDisconnect) {
             _isReconnecting.value = false
@@ -298,21 +315,23 @@ class PulseShiftBleManager(
         if (connectedSinceMs > 0 && (System.currentTimeMillis() - connectedSinceMs > 30_000L)) {
             reconnectAttempts = 0
         }
-        if (reconnectAttempts >= 5) {
+        if (reconnectAttempts >= maxReconnectAttempts) {
             _isReconnecting.value = false
+            PulseShiftBleService.stop(context)
             val prefix = if (errorDetail != null) "$errorDetail " else ""
-            _connectionError.value = "${prefix}Reconnection gave up after 5 attempts; tap Connect to retry."
+            _connectionError.value = "${prefix}Reconnection gave up after $maxReconnectAttempts attempts; tap Connect to retry."
             return
         }
         val attempt = ++reconnectAttempts
         _isReconnecting.value = true
-        val backoffMs = minOf(1000L * attempt, 5000L)
+        PulseShiftBleService.start(context)
+        val backoffMs = calculateBackoffMs(attempt)
         val prefix = if (errorDetail != null) "$errorDetail " else ""
-        _connectionError.value = "${prefix}Reconnecting (attempt $attempt/5 in ${backoffMs / 1000}s)..."
+        _connectionError.value = "${prefix}Reconnecting (attempt $attempt/$maxReconnectAttempts in ${backoffMs / 1000}s)..."
 
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
-            // Linear backoff: 1s, 2s, 3s, 4s, 5s capped at 5s.
+            // Bounded exponential backoff with jitter
             delay(backoffMs)
             if (!autoReconnectEnabled || userInitiatedDisconnect) {
                 _isReconnecting.value = false
@@ -361,6 +380,34 @@ class PulseShiftBleManager(
         }
     }
 
+    internal fun handleBluetoothAdapterStateChange(state: Int) {
+        when (state) {
+            BluetoothAdapter.STATE_TURNING_OFF,
+            BluetoothAdapter.STATE_OFF -> {
+                Log.w(TAG, "Bluetooth turned off by user/system")
+                logDiagnosticEvent("Bluetooth adapter state changed to OFF", LogSeverity.WARNING)
+                teardownTransport(wasUserInitiated = false)
+                _connectionState.value = BleConnectionState.BLUETOOTH_DISABLED
+                _connectionError.value = "Bluetooth is turned off."
+                _isReconnecting.value = false
+                reconnectJob?.cancel()
+                reconnectJob = null
+                PulseShiftBleService.stop(context)
+            }
+            BluetoothAdapter.STATE_ON -> {
+                Log.i(TAG, "Bluetooth turned on")
+                logDiagnosticEvent("Bluetooth adapter state changed to ON", LogSeverity.INFO)
+                if (autoReconnectEnabled && lastConnectedAddress != null && !userInitiatedDisconnect) {
+                    _connectionError.value = "Bluetooth enabled; reconnecting..."
+                    scheduleReconnect("Bluetooth re-enabled.")
+                } else if (_connectionState.value == BleConnectionState.BLUETOOTH_DISABLED) {
+                    _connectionState.value = BleConnectionState.DISCONNECTED
+                    _connectionError.value = null
+                }
+            }
+        }
+    }
+
     // Reboot tracking (uptime regression detection)
     private var lastUptimeMs: Long = 0L
 
@@ -370,7 +417,23 @@ class PulseShiftBleManager(
 
     private var tickerJob: Job? = null
 
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                handleBluetoothAdapterStateChange(state)
+            }
+        }
+    }
+
     init {
+        try {
+            val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+            context.registerReceiver(bluetoothStateReceiver, filter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register Bluetooth state receiver: ${e.message}")
+        }
+
         // Ticker job for cleaning up stale incomplete log assemblies every second
         tickerJob = scope.launch {
             while (true) {
@@ -385,6 +448,10 @@ class PulseShiftBleManager(
     }
 
     fun close() {
+        try {
+            context.unregisterReceiver(bluetoothStateReceiver)
+        } catch (_: Exception) {}
+        PulseShiftBleService.stop(context)
         tickerJob?.cancel()
         reconnectJob?.cancel()
         connectTimeoutJob?.cancel()
@@ -514,6 +581,8 @@ class PulseShiftBleManager(
         _connectionError.value = null
         _connectionState.value = BleConnectionState.CONNECTING
 
+        PulseShiftBleService.start(context)
+
         teardownTransport(wasUserInitiated = false)
         val gatt = try {
             device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -638,6 +707,25 @@ class PulseShiftBleManager(
         teardownTransport(wasUserInitiated = true)
         _connectionState.value = BleConnectionState.DISCONNECTED
         _connectionError.value = null
+        PulseShiftBleService.stop(context)
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun getMaxReconnectAttempts(): Int = maxReconnectAttempts
+
+    @androidx.annotation.VisibleForTesting
+    internal fun setMaxReconnectAttemptsForTesting(maxAttempts: Int) {
+        maxReconnectAttempts = maxAttempts
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun setJitterEnabledForTesting(enabled: Boolean) {
+        jitterEnabled = enabled
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun triggerBluetoothAdapterStateChangeForTesting(state: Int) {
+        handleBluetoothAdapterStateChange(state)
     }
 
     @androidx.annotation.VisibleForTesting

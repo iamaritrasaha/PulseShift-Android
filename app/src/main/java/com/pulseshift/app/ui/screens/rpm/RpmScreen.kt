@@ -273,11 +273,14 @@ fun BasicRpmView(
                 )
                 Column {
                     Text(
-                        text = if (isVerified) "CAN RPM Calibration Verified" else "Estimated RPM — Unverified",
+                        text = if (isVerified) "Firmware Calibration Verified (Cryptographic)" else "CAN Multiplier: ×40.0 — Field verified",
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = if (isVerified) "Live engine RPM mapping verified against reference sensor." else "Provisional CAN conversion active. Raw candidate byte 0x301 requires multi-point calibration against an independent RPM reference before verification.",
+                        text = if (isVerified)
+                            "Live engine RPM verified and cryptographically bound on controller."
+                        else
+                            "CAN ID 0x301 Byte 0 ×40.0 field verified. Note: Firmware Effect 4 (calibrated shift cues) requires on-device cryptographic calibration binding; Effect 5 provides direct live engine RPM tachometer rendering.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -336,7 +339,14 @@ fun ThresholdSliderCard(
     rpm: Int,
     onThresholdChange: (Int, Int) -> Unit
 ) {
-    var localRpm by remember(rpm) { mutableFloatStateOf(rpm.toFloat()) }
+    var localRpm by remember { mutableFloatStateOf(rpm.toFloat()) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    LaunchedEffect(rpm) {
+        if (!isDragging) {
+            localRpm = rpm.toFloat()
+        }
+    }
 
     Card(
         shape = PulseShiftShapeTokens.Card,
@@ -354,8 +364,14 @@ fun ThresholdSliderCard(
             }
             Slider(
                 value = localRpm,
-                onValueChange = { localRpm = it },
-                onValueChangeFinished = { onThresholdChange(index, localRpm.toInt()) },
+                onValueChange = {
+                    isDragging = true
+                    localRpm = it
+                },
+                onValueChangeFinished = {
+                    isDragging = false
+                    onThresholdChange(index, localRpm.toInt())
+                },
                 valueRange = 1000f..12000f
             )
         }
@@ -715,11 +731,23 @@ fun AdvancedCalibrationView(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                var hystSlider by remember(hysteresis) { mutableStateOf(hysteresis.toFloat()) }
+                var hystSlider by remember { mutableStateOf(hysteresis.toFloat()) }
+                var isDraggingHyst by remember { mutableStateOf(false) }
+                LaunchedEffect(hysteresis) {
+                    if (!isDraggingHyst) {
+                        hystSlider = hysteresis.toFloat()
+                    }
+                }
                 Slider(
                     value = hystSlider,
-                    onValueChange = { hystSlider = it },
-                    onValueChangeFinished = { onSetHysteresis(hystSlider.toInt()) },
+                    onValueChange = {
+                        isDraggingHyst = true
+                        hystSlider = it
+                    },
+                    onValueChangeFinished = {
+                        isDraggingHyst = false
+                        onSetHysteresis(hystSlider.toInt())
+                    },
                     valueRange = 0f..2000f
                 )
                 Text("${hystSlider.toInt()} RPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)

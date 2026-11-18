@@ -51,7 +51,7 @@ class ProtocolV1CodecTest {
         assertTrue(rpmState.isRpmAvailable)
         assertFalse(rpmState.isStale)
         assertEquals("1760 RPM", rpmState.displayRpmValueText)
-        assertEquals("Estimated RPM — Unverified", rpmState.displayLabelText)
+        assertEquals("Live Engine RPM", rpmState.displayLabelText)
     }
 
     @Test

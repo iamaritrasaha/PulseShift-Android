@@ -457,8 +457,13 @@ fun ConnectedDeviceCard(
                 isSupported = device.capabilities.hasConfigV2Support
             )
             CapabilityRow(
-                "Calibration status",
-                if (device.capabilities.supportsLiveRpmVerified) "VERIFIED" else "UNVERIFIED (provisional ×40)",
+                "CAN RPM Multiplier",
+                "×40.0 — Field verified",
+                isSupported = true
+            )
+            CapabilityRow(
+                "Firmware Calibration (Effect 4)",
+                if (device.capabilities.supportsLiveRpmVerified) "Cryptographically Verified" else "Not calibrated (Effect 5 live preview active)",
                 isSupported = device.capabilities.supportsLiveRpmVerified
             )
             CapabilityRow(

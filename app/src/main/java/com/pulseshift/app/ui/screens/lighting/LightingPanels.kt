@@ -44,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -161,8 +162,15 @@ fun ColorsPanel(
             title = "Master Brightness",
             subtitle = "Hardware PWM output scaling (0-255)"
         ) {
-            var localBrightness by remember(lighting.brightness) {
+            var localBrightness by remember {
                 mutableFloatStateOf(lighting.brightness.toFloat())
+            }
+            var isDraggingBrightness by remember { mutableStateOf(false) }
+
+            LaunchedEffect(lighting.brightness) {
+                if (!isDraggingBrightness) {
+                    localBrightness = lighting.brightness.toFloat()
+                }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
@@ -195,10 +203,11 @@ fun ColorsPanel(
                 PulseShiftSlider(
                     value = localBrightness,
                     onValueChange = {
+                        isDraggingBrightness = true
                         localBrightness = it
-                        viewModel.setBrightness(it.toInt())
                     },
                     onValueChangeFinished = {
+                        isDraggingBrightness = false
                         viewModel.setBrightness(localBrightness.toInt())
                     },
                     valueRange = 0f..255f,
@@ -348,8 +357,15 @@ fun EffectsPanel(
         title = "Animation Speed",
         subtitle = "Cycle speed for dynamic effects (0-100%)"
     ) {
-        var localSpeed by remember(lighting.effectSpeed) {
+        var localSpeed by remember {
             mutableFloatStateOf(lighting.effectSpeed.toFloat())
+        }
+        var isDraggingSpeed by remember { mutableStateOf(false) }
+
+        LaunchedEffect(lighting.effectSpeed) {
+            if (!isDraggingSpeed) {
+                localSpeed = lighting.effectSpeed.toFloat()
+            }
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
@@ -411,10 +427,11 @@ fun EffectsPanel(
             PulseShiftSlider(
                 value = localSpeed,
                 onValueChange = {
+                    isDraggingSpeed = true
                     localSpeed = it
-                    viewModel.setEffectSpeed(it.toInt())
                 },
                 onValueChangeFinished = {
+                    isDraggingSpeed = false
                     viewModel.setEffectSpeed(localSpeed.toInt())
                 },
                 valueRange = 0f..100f,
@@ -756,8 +773,15 @@ fun StartupPanel(
         (ms.coerceIn(100, 10000) and 0x7FFF) or
             (if (loopingSupported && loop && animation != StartupAnimation.NONE) 0x8000 else 0)
 
-    var durationMs by remember(lighting.startupCycleDurationMs) {
+    var durationMs by remember {
         mutableFloatStateOf(lighting.startupCycleDurationMs.toFloat())
+    }
+    var isDraggingDuration by remember { mutableStateOf(false) }
+
+    LaunchedEffect(lighting.startupCycleDurationMs) {
+        if (!isDraggingDuration) {
+            durationMs = lighting.startupCycleDurationMs.toFloat()
+        }
     }
 
     Column(
@@ -948,8 +972,12 @@ fun StartupPanel(
 
             PulseShiftSlider(
                 value = durationMs.coerceIn(effectiveMin.toFloat(), 10000f),
-                onValueChange = { durationMs = it },
+                onValueChange = {
+                    isDraggingDuration = true
+                    durationMs = it
+                },
                 onValueChangeFinished = {
+                    isDraggingDuration = false
                     viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(durationMs.toInt()))
                 },
                 valueRange = effectiveMin.toFloat()..10000f,
