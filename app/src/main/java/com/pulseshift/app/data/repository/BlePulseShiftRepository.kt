@@ -1433,7 +1433,35 @@ class BlePulseShiftRepository internal constructor(
                     }
                 }
 
+                // Applying a preset commits RAM, not flash. Save explicitly
+                // after an exact authoritative readback so a reboot restores it.
+                // Never persist a partial or mismatched transaction.
+                val savedToNvs = if (confirmed && linkAvailable() && _isAuthenticated.value) {
+                    val saveSequence = nextSeq()
+                    val saveAck = sendCommandAndWaitAck(
+                        PulseShiftBleProtocol.buildSaveConfigV2(saveSequence),
+                        saveSequence,
+                        PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG
+                    )
+                    val persisted = saveAck?.isSuccess == true && saveAck.isPersisted &&
+                        saveAck.activeRevision == commitRevision && linkAvailable()
+                    if (persisted) {
+                        _hasUnsavedChanges.value = false
+                        nvsConfirmedRevision = commitRevision
+                        _isNvsConfirmed.value = true
+                    } else {
+                        _hasUnsavedChanges.value = true
+                        _isNvsConfirmed.value = false
+                        _lightingError.tryEmit(
+                            "Preset applied in RAM, but flash persistence was NOT confirmed. " +
+                                "Open Lighting Studio and tap Save Changes to ESP32 Flash."
+                        )
+                    }
+                    persisted
+                } else false
+
                 val result = when {
+                    savedToNvs -> PresetApplyResult.PERSISTED
                     confirmed -> PresetApplyResult.READBACK_CONFIRMED
                     applied -> PresetApplyResult.APPLIED_NEEDS_READBACK
                     else -> PresetApplyResult.COMMIT_UNKNOWN
@@ -1451,10 +1479,10 @@ class BlePulseShiftRepository internal constructor(
                     )
                     _lightingError.tryEmit("${result.message(preset.name)} $detail")
                 }
-                val phase = if (result == PresetApplyResult.COMMIT_UNKNOWN) {
-                    DeviceCommandPhase.UNVERIFIED
-                } else {
-                    DeviceCommandPhase.APPLIED
+                val phase = when (result) {
+                    PresetApplyResult.PERSISTED -> DeviceCommandPhase.SAVED
+                    PresetApplyResult.COMMIT_UNKNOWN -> DeviceCommandPhase.UNVERIFIED
+                    else -> DeviceCommandPhase.APPLIED
                 }
                 recordDeviceCommand("Apply preset", phase, "${result.message(preset.name)} $detail".trimEnd())
                 result
