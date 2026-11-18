@@ -276,11 +276,12 @@ class PresetPersistenceTest {
             viewModel.applyPreset(preset)
             val message = feedback.await()
             when (outcome) {
+                PresetApplyResult.PERSISTED -> assertTrue(message.contains("saved to ESP32 NVS"))
                 PresetApplyResult.READBACK_CONFIRMED -> {
-                    assertTrue(message.contains("active in ESP32 RAM"))
-                    assertTrue(message.contains("Readback confirmed"))
+                    assertTrue(message.contains("active in RAM"))
+                    assertTrue(message.contains("NVS save unconfirmed"))
                 }
-                PresetApplyResult.APPLIED_NEEDS_READBACK -> assertTrue(message.contains("Resync to verify readback"))
+                PresetApplyResult.APPLIED_NEEDS_READBACK -> assertTrue(message.contains("resync and save"))
                 PresetApplyResult.COMMIT_UNKNOWN -> assertTrue(message.contains("commit unverified"))
             }
             assertFalse(viewModel.isBusy.value)

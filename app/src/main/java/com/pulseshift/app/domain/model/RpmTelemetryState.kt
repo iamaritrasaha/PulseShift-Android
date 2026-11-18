@@ -1,5 +1,7 @@
 package com.pulseshift.app.domain.model
 
+internal fun telemetryClockMs(): Long = System.nanoTime() / 1_000_000
+
 data class RpmStatusFlags(
     val isCandidateFresh: Boolean,
     val isCalibrationVerified: Boolean,
@@ -38,15 +40,32 @@ data class RpmTelemetryState(
     val totalCanFramesReceived: Long,
     val rpmSampleAgeMs: Int, // 65535 = unavailable
     val reserved: Int = 0,
-    val timestampReceivedMs: Long = System.currentTimeMillis()
+    val timestampReceivedMs: Long = telemetryClockMs()
 ) {
+    /** Optional experimental voltage probe in RPM packet bytes 18-19.
+     * 0xA5xx = fresh CAN 0x303[1] raw byte, 0x5A00 = stale,
+     * 0x0000 = old firmware / unsupported. NEVER treat absent data as 0 V.
+     * Hypothesized scaling: raw / 10.0 V. No multimeter calibration yet.
+     */
+    val experimentalVoltageProbeSupported: Boolean
+        get() = (reserved ushr 8) == 0xA5 || reserved == 0x5A00
+
+    val experimentalVoltageRaw: Int?
+        get() = if ((reserved ushr 8) == 0xA5) reserved and 0xFF else null
+
+    val experimentalVoltageVolts: Double?
+        get() = experimentalVoltageRaw?.div(10.0)
+
     val isRpmAvailable: Boolean
         get() = statusFlags.isCandidateFresh &&
                 provisionalRpm != 65535 &&
                 rpmSampleAgeMs != 65535
 
+    val isPacketFresh: Boolean
+        get() = telemetryClockMs() - timestampReceivedMs in 0..2_000L
+
     val isStale: Boolean
-        get() = (System.currentTimeMillis() - timestampReceivedMs > 2000) ||
+        get() = !isPacketFresh ||
                 (rpmSampleAgeMs != 65535 && rpmSampleAgeMs > 3000)
 
     val displayRpmValueText: String

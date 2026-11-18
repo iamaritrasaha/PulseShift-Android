@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 class RpmViewModel(
     private val repository: PulseShiftRepository
 ) : ViewModel() {
+    val connectionState = repository.connectionState
     val rpmTelemetryState: StateFlow<RpmTelemetryState?> = repository.rpmTelemetryState
     val configSnapshot: StateFlow<ConfigSnapshot?> = repository.configSnapshot
     val shiftLightConfig: StateFlow<ShiftLightConfig> = repository.shiftLightConfig

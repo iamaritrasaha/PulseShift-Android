@@ -43,9 +43,11 @@ data class DeviceCapabilities(
     val protocolMinor: Int = 0,
     val otaFlags: Int = 0,
     val supportsExtendedStartupAnimation: Boolean = false,
+    val supportsLoopingStartup: Boolean = false,
     val supportsRangeDiscovery: Boolean = false,
     val supportsOtaUpdate: Boolean = false
 ) {
+    val hasDualOtaSlots: Boolean get() = (otaFlags and 0x02) != 0
     val supportsOtaImageDigest: Boolean get() = (otaFlags and 0x04) != 0
     val firmwareVersion: String
         get() = if (firmwareMajor > 0) "$firmwareMajor.$firmwareMinor.$firmwarePatch" else "unknown"
@@ -98,6 +100,7 @@ data class DeviceCapabilities(
                 supportsCaptureStage = (mask and 0x8000) != 0,
                 supportsLedBenchTest = (mask and 0x10000) != 0,
                 supportsExtendedStartupAnimation = hasExtAnim,
+                supportsLoopingStartup = (mask and 0x100000) != 0,
                 supportsRangeDiscovery = (mask and 0x40000) != 0,
                 supportsOtaUpdate = (mask and 0x80000) != 0,
                 hasConfigV2Support = true,

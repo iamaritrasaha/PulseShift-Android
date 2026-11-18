@@ -35,6 +35,54 @@ PulseShift for Android provides complete standalone control over the physical ES
 
 ---
 
+### Live Vehicle Data
+
+The dashboard shows provisional RPM, CAN activity and health, controller uptime,
+recording, preserved-capture status and LittleFS health. Diagnostics shows raw RPM
+and signal age, missed frames, FIFO overruns and CAN errors. RPM notifications are
+sent at 10 Hz and health at 1 Hz. Expired and disconnected readings show a dash.
+
+The experimental battery estimate uses standard CAN `0x303[1]` divided by 10.0.
+Compatible firmware publishes a fresh raw byte in the reserved field of the same
+20-byte RPM BLE packet. The app shows the raw byte and labels the estimate
+**EXPERIMENTAL**. Older firmware and stale samples show **— V**. The scale is
+uncalibrated and drives no battery warnings.
+
+Diagnostics can request a raw snapshot of `0x302[1]`, `0x302[5]`, `0x452[7]`,
+and `0x540[3]` with paired firmware. Samples carry no physical units.
+
+### Signed Bluetooth OTA
+
+Settings requires an authenticated dual-slot controller with a valid boot slot,
+fresh idle CAN telemetry, and recording stopped. Android checks the selected
+package against the controller's trusted P-256 key before transfer. After
+reconnect it verifies the target slot and running image digest, reauthenticates,
+and confirms the pending image. Success requires a final VALID state readback.
+Physical OTA and rollback require bench validation with stable power and USB recovery.
+
+---
+
+### Continuous Startup Animation and Persistent Presets
+
+Compatible firmware advertises BLE capability bit 20, enabling a **Loop continuously**
+switch under Lighting Studio > Startup. When off, the ignition animation plays
+once for the selected cycle duration (100 ms-10 s). When on, it repeats while
+parked and yields to RPM lighting, missing-signal safeguards, power-off, faults,
+and the authorization/bench-test layers. The loop setting uses bit 15 of the
+existing 16-bit startup duration, preserving the storage schema and older
+configurations; the app gates writes when connected firmware lacks support.
+
+**Phone preset library vs ESP32 persistence are different.** Saving a preset
+to the library stores it on the phone. Selecting **Apply & Save to ESP32**
+stages and commits the preset, verifies an authoritative device snapshot, then
+requires an acknowledged `SAVE_CONFIG` NVS write before reporting it saved for
+reboot. Failed or uncertain saves remain RAM-only and display an explicit warning.
+The existing "Save Changes to ESP32 Flash (NVS)" action remains available for
+individual lighting adjustments. The updated firmware and Android build are
+needed for looping; no automatic physical update or data erase occurs.
+
+---
+
 ## 1. Architecture & Design Principles
 
 The Android application is designed around modern Android development standards and robust embedded integration:

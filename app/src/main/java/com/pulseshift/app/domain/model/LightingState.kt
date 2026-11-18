@@ -23,6 +23,9 @@ data class LightingState(
         require(ledColors.size == 6) { "PulseShift strip requires exactly 6 LED colors" }
     }
 
+    val isStartupLooping: Boolean get() = (startupDurationMs and 0x8000) != 0
+    val startupCycleDurationMs: Int get() = startupDurationMs and 0x7FFF
+
     val brightnessPercent: Int
         get() = ((brightness / 255f) * 100).toInt()
 

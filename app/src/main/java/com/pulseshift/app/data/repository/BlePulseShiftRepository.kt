@@ -5,6 +5,7 @@ import com.pulseshift.app.data.ble.CapturePageRead
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.data.ble.PulseShiftBleManager
 import com.pulseshift.app.data.ble.PulseShiftBleProtocol
+import com.pulseshift.app.data.ble.SignedOtaImage
 import com.pulseshift.app.data.local.OwnerCredentialManager
 import com.pulseshift.app.data.local.PulseShiftDataStore
 import com.pulseshift.app.domain.model.AuthState
@@ -24,7 +25,6 @@ import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.HistoricalLogLoadingState
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.OtaUpdateState
-import com.pulseshift.app.domain.model.OTA_MAX_PACKAGE_BYTES
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.PresetApplyResult
 import com.pulseshift.app.domain.model.ProfileApplyResult
@@ -72,10 +72,11 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
-class BlePulseShiftRepository(
+class BlePulseShiftRepository internal constructor(
     private val bleManager: PulseShiftBleManager,
     private val dataStore: PulseShiftDataStore,
-    private val credentialManager: OwnerCredentialManager = OwnerCredentialManager(bleManager.context)
+    private val credentialManager: OwnerCredentialManager = OwnerCredentialManager(bleManager.context),
+    private val validateOtaImage: (ByteArray) -> SignedOtaImage = SignedOtaImage::validate
 ) : PulseShiftRepository {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private val transactionMutex = Mutex()
@@ -439,6 +440,7 @@ class BlePulseShiftRepository(
                         _isNvsConfirmed.value = false
                         pendingPresetRevision = null
                         _configSnapshot.value = null
+                        _diagnosticsReport.value = null
                         _lightingState.value = _lightingState.value.copy(isHardwareConfirmed = false)
                         _historicalPageLoadingState.value = HistoricalLogLoadingState.Idle
                         cancelPendingWaiters()
@@ -931,6 +933,10 @@ class BlePulseShiftRepository(
         } else {
             animation
         }
+        if ((durationMs and 0x8000) != 0 && caps?.supportsLoopingStartup != true) {
+            _lightingError.tryEmit("Continuous startup animation requires updated ESP32 firmware.")
+            return
+        }
         writeLightingCommand(
             "startup animation", PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP,
             { seq -> PulseShiftBleProtocol.buildSetStartupV2(seq, effectiveAnim.id, durationMs) },
@@ -1273,6 +1279,10 @@ class BlePulseShiftRepository(
             if (!requireAuthenticated()) {
                 failPreset("Owner authentication required to apply presets.")
             }
+            if ((preset.startupDurationMs and 0x8000) != 0 &&
+                bleManager.connectedDevice.value?.capabilities?.supportsLoopingStartup != true) {
+                failPreset("Continuous animation preset requires updated ESP32 firmware.")
+            }
 
             val previousState = _lightingState.value
             val wasUnsaved = _hasUnsavedChanges.value
@@ -1423,7 +1433,35 @@ class BlePulseShiftRepository(
                     }
                 }
 
+                // Applying a preset commits RAM, not flash. Save explicitly
+                // after an exact authoritative readback so a reboot restores it.
+                // Never persist a partial or mismatched transaction.
+                val savedToNvs = if (confirmed && linkAvailable() && _isAuthenticated.value) {
+                    val saveSequence = nextSeq()
+                    val saveAck = sendCommandAndWaitAck(
+                        PulseShiftBleProtocol.buildSaveConfigV2(saveSequence),
+                        saveSequence,
+                        PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG
+                    )
+                    val persisted = saveAck?.isSuccess == true && saveAck.isPersisted &&
+                        saveAck.activeRevision == commitRevision && linkAvailable()
+                    if (persisted) {
+                        _hasUnsavedChanges.value = false
+                        nvsConfirmedRevision = commitRevision
+                        _isNvsConfirmed.value = true
+                    } else {
+                        _hasUnsavedChanges.value = true
+                        _isNvsConfirmed.value = false
+                        _lightingError.tryEmit(
+                            "Preset applied in RAM, but flash persistence was NOT confirmed. " +
+                                "Open Lighting Studio and tap Save Changes to ESP32 Flash."
+                        )
+                    }
+                    persisted
+                } else false
+
                 val result = when {
+                    savedToNvs -> PresetApplyResult.PERSISTED
                     confirmed -> PresetApplyResult.READBACK_CONFIRMED
                     applied -> PresetApplyResult.APPLIED_NEEDS_READBACK
                     else -> PresetApplyResult.COMMIT_UNKNOWN
@@ -1441,10 +1479,10 @@ class BlePulseShiftRepository(
                     )
                     _lightingError.tryEmit("${result.message(preset.name)} $detail")
                 }
-                val phase = if (result == PresetApplyResult.COMMIT_UNKNOWN) {
-                    DeviceCommandPhase.UNVERIFIED
-                } else {
-                    DeviceCommandPhase.APPLIED
+                val phase = when (result) {
+                    PresetApplyResult.PERSISTED -> DeviceCommandPhase.SAVED
+                    PresetApplyResult.COMMIT_UNKNOWN -> DeviceCommandPhase.UNVERIFIED
+                    else -> DeviceCommandPhase.APPLIED
                 }
                 recordDeviceCommand("Apply preset", phase, "${result.message(preset.name)} $detail".trimEnd())
                 result
@@ -1509,20 +1547,20 @@ class BlePulseShiftRepository(
             val assignedId = if (preset.id.isNotBlank()) preset.id else UUID.randomUUID().toString()
             list.add(preset.copy(id = assignedId, isCustom = true))
         }
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
     }
 
     override suspend fun deletePreset(id: String) {
         val list = _presets.value.toMutableList()
         list.removeAll { it.id == id && it.isCustom }
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
     }
 
     override suspend fun restoreDefaultPresets() {
-        _presets.value = Preset.DefaultPresets
         persistCustomPresets(emptyList())
+        _presets.value = Preset.DefaultPresets
     }
 
     override suspend fun updatePreset(preset: Preset) {
@@ -1530,8 +1568,8 @@ class BlePulseShiftRepository(
         val index = list.indexOfFirst { it.id == preset.id }
         if (index >= 0) {
             list[index] = preset.copy(isCustom = true)
-            _presets.value = list
             persistCustomPresets(list)
+            _presets.value = list
         }
     }
 
@@ -1544,8 +1582,8 @@ class BlePulseShiftRepository(
         )
         val list = _presets.value.toMutableList()
         list.add(newPreset)
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
         return newPreset
     }
 
@@ -1568,8 +1606,8 @@ class BlePulseShiftRepository(
         )
         val list = _presets.value.toMutableList()
         list.add(newPreset)
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
         return newPreset
     }
 
@@ -2402,7 +2440,8 @@ class BlePulseShiftRepository(
                 _otaUpdateState.value = OtaUpdateState.Failed(
                     "Interrupted while waiting for the ESP32 to confirm OTA start."
                 )
-            } else if (state is OtaUpdateState.Verifying || state is OtaUpdateState.Rebooting) {
+            } else if (state is OtaUpdateState.Verifying || state is OtaUpdateState.Rebooting ||
+                state is OtaUpdateState.Reconnecting || state is OtaUpdateState.Confirming) {
                 _otaUpdateState.value = OtaUpdateState.Failed(
                     "Post-update verification was interrupted. The ESP32 may have switched slots.",
                     false
@@ -2429,83 +2468,53 @@ class BlePulseShiftRepository(
             return false
         }
         val caps = dev.capabilities
-        if (!caps.supportsOtaUpdate) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Connected device (${dev.firmwareVersion ?: "unknown"}) does not advertise OTA capability.", false)
+        if (!caps.supportsOtaUpdate || !caps.hasDualOtaSlots || caps.otaActiveSlot !in 0..1) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Connected device (${dev.firmwareVersion ?: "unknown"}) does not report a compatible dual-slot OTA layout.", false)
             return false
         }
         val rpm = rpmTelemetryState.value
-        if (rpm != null && !rpm.isStale &&
-            (rpm.statusFlags.isRecentCanTrafficDetected || (rpm.isRpmAvailable && rpm.provisionalRpm > 0))) {
+        if (rpm == null || !rpm.isPacketFresh || !rpm.statusFlags.isCanHealthy ||
+            rpm.statusFlags.isFlashRecordingActive || rpm.statusFlags.isRecentCanTrafficDetected ||
+            (rpm.isRpmAvailable && rpm.provisionalRpm > 0)) {
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "The engine or CAN bus is active. Switch the motorcycle off before starting OTA.",
+                "OTA requires fresh controller telemetry, an operational and idle CAN receiver, and stopped recording. Switch off the engine and ignition.",
                 false
             )
             return false
         }
 
-        val size = imageBytes.size.toLong()
-        if (imageBytes.size !in 65536..OTA_MAX_PACKAGE_BYTES) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Image size ($size bytes) is invalid. Must be between 64 KB and 1.25 MB.", false)
-            return false
-        }
-
-        if (imageBytes[0] != 0xE9.toByte()) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Invalid ESP32 image magic byte: 0x${"%02X".format(imageBytes[0])}. Expected 0xE9.", false)
-            return false
-        }
-
-        val appPayloadSize = imageBytes.size - 76
-        val trailer = java.nio.ByteBuffer.wrap(imageBytes, appPayloadSize, 76)
-            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        if (trailer.int != 0x544F5350 || trailer.get() != 1.toByte() || trailer.get() != 0.toByte()) {
-            _otaUpdateState.value = OtaUpdateState.Failed(
-                "Image rejected. Select a firmware app image with a PSOT version 1 trailer.",
-                false
-            )
-            return false
-        }
-
-        val md = java.security.MessageDigest.getInstance("SHA-256")
-        md.update(imageBytes, 0, appPayloadSize)
-        val shaBytes = md.digest()
-        val shaHex = shaBytes.joinToString("") { "%02x".format(it) }
-
-        val crc = java.util.zip.CRC32()
-        crc.update(imageBytes, 0, appPayloadSize)
-        val crcVal = crc.value
-        if ((trailer.int.toLong() and 0xFFFFFFFFL) != crcVal || trailer.short != 64.toShort()) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The PSOT CRC or signature length is invalid.", false)
-            return false
-        }
-
-        val appDigest = when (imageBytes[23].toInt()) {
-            // ESP-IDF returns SHA-256 over the entire app when there is no appended hash.
-            0 -> shaBytes
-            1 -> {
-                val offset = appPayloadSize - 32
-                md.update(imageBytes, 0, offset)
-                val expected = md.digest()
-                if (!expected.contentEquals(imageBytes.copyOfRange(offset, appPayloadSize))) {
-                    _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The ESP32 app digest is invalid.", false)
-                    return false
-                }
-                expected
-            }
-            else -> {
-                _otaUpdateState.value = OtaUpdateState.Failed("Image rejected. The ESP32 hash flag is invalid.", false)
-                return false
-            }
-        }
-
-        val previousVersion = dev.firmwareVersion ?: "unknown"
-        val expectedSlot = when (caps.otaActiveSlot) {
-            0 -> 1
-            1 -> 0
-            else -> -1
-        }
-
-        _otaUpdateState.value = OtaUpdateState.Validating(size, shaHex, expectedSlot)
         val linkGeneration = configLinkGeneration.get()
+        val size = imageBytes.size.toLong()
+        val previousVersion = dev.firmwareVersion ?: "unknown"
+        val expectedSlot = 1 - caps.otaActiveSlot
+        val image = try {
+            withContext(kotlinx.coroutines.Dispatchers.Default) { validateOtaImage(imageBytes) }
+        } catch (error: IllegalArgumentException) {
+            _otaUpdateState.value = OtaUpdateState.Failed(error.message ?: "Invalid signed firmware package.", false)
+            return false
+        }
+        val shaBytes = image.sha256
+        val shaHex = shaBytes.joinToString("") { "%02x".format(it) }
+        _otaUpdateState.value = OtaUpdateState.Validating(size, shaHex, expectedSlot)
+
+        val statusSeq = nextSeq()
+        val status = sendCommandAndWaitAck(
+            PulseShiftBleProtocol.buildOtaStatusV2(statusSeq), statusSeq,
+            PulseShiftBleProtocol.V2_OPCODE_OTA_STATUS
+        )
+        if (status?.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS || status.payload.size < 8 ||
+            status.payload[0] != 0.toByte() || status.payload[1].toInt() != caps.otaActiveSlot ||
+            status.payload[6] != 2.toByte()) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "OTA requires an idle controller with the current boot slot marked VALID as the fallback.", false
+            )
+            return false
+        }
+        if (configLinkGeneration.get() != linkGeneration || connectedDevice.value?.address != dev.address ||
+            !_isAuthenticated.value) {
+            _otaUpdateState.value = OtaUpdateState.Failed("The authenticated BLE connection changed. Reconnect and select the file again.")
+            return false
+        }
 
         // 1. Send OTA BEGIN
         val seqBegin = nextSeq()
@@ -2521,11 +2530,12 @@ class BlePulseShiftRepository(
                 null -> "The ESP32 did not acknowledge the start of the transfer."
                 else -> "The ESP32 rejected the start of the transfer (status=${beginAck.statusCode})."
             }
+            if (beginAck == null) abortOtaTransfer(dev.address, linkGeneration)
             _otaUpdateState.value = OtaUpdateState.Failed(reason, true)
             return false
         }
         val targetSlot = beginAck.payload.getOrNull(4)?.toInt()
-        if (targetSlot == null || targetSlot !in 0..1 || (expectedSlot != -1 && targetSlot != expectedSlot)) {
+        if (targetSlot == null || targetSlot != expectedSlot) {
             abortOtaTransfer(dev.address, linkGeneration)
             _otaUpdateState.value = OtaUpdateState.Failed("The ESP32 did not identify the expected inactive OTA slot.", false)
             return false
@@ -2533,10 +2543,16 @@ class BlePulseShiftRepository(
 
         if (!transferOtaData(imageBytes, targetSlot, dev.address, linkGeneration)) return false
 
+        if (configLinkGeneration.get() != linkGeneration || connectedDevice.value?.address != dev.address ||
+            !_isAuthenticated.value) {
+            _otaUpdateState.value = OtaUpdateState.Failed("The authenticated BLE connection changed before commit.")
+            return false
+        }
+
         // 3. Send OTA END
         val seqEnd = nextSeq()
         val shaTail = shaBytes.copyOfRange(28, 32)
-        val endPacket = PulseShiftBleProtocol.buildOtaEndV2(seqEnd, shaTail, crcVal)
+        val endPacket = PulseShiftBleProtocol.buildOtaEndV2(seqEnd, shaTail, image.crc32)
         val endAck = sendCommandAndWaitAck(endPacket, seqEnd, PulseShiftBleProtocol.V2_OPCODE_OTA_END, 10000L)
         if (endAck != null && endAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS) {
             val errMsg = when (endAck.statusCode) {
@@ -2572,6 +2588,7 @@ class BlePulseShiftRepository(
         }
 
         // 5. Await reconnect with new firmware
+        _otaUpdateState.value = OtaUpdateState.Reconnecting(targetSlot)
         var reconnectedDev: BleDevice? = null
         val reconnected = withTimeoutOrNull(35000L) {
             while (true) {
@@ -2602,16 +2619,23 @@ class BlePulseShiftRepository(
         }
 
         val postCaps = postDev.capabilities
-        if (!postCaps.hasConfigV2Support) {
-            _otaUpdateState.value = OtaUpdateState.Failed("Reconnected device does not report Protocol V2 capabilities.", false)
+        if (!postCaps.hasConfigV2Support || !postCaps.hasDualOtaSlots) {
+            _otaUpdateState.value = OtaUpdateState.Failed("Reconnected controller does not report dual-slot Protocol V2 capabilities.", false)
             return false
         }
 
         val runningSlot = postCaps.otaActiveSlot
         if (runningSlot != targetSlot) {
             _otaUpdateState.value = OtaUpdateState.Failed(
-                "The ESP32 booted slot $runningSlot. The expected OTA slot was $targetSlot; activation or rollback is unresolved.",
+                "The ESP32 is running app$runningSlot instead of app$targetSlot. The update did not activate or the controller rolled back.",
                 false
+            )
+            return false
+        }
+
+        if (!postCaps.supportsOtaImageDigest) {
+            _otaUpdateState.value = OtaUpdateState.Failed(
+                "The new firmware cannot report its running image digest. Confirmation withheld.", false
             )
             return false
         }
@@ -2626,6 +2650,7 @@ class BlePulseShiftRepository(
         // capability discovery are read-only; they do not prove owner access.
         // The background reconnect handler also authenticates, and the shared
         // mutex makes an explicit retry safe without concurrent auth commands.
+        val postLinkGeneration = configLinkGeneration.get()
         val authorized = withTimeoutOrNull(20000L) {
             if (_isAuthenticated.value) true else authenticateChallengeResponse()
         } == true && _isAuthenticated.value
@@ -2639,12 +2664,14 @@ class BlePulseShiftRepository(
         }
 
         // 8-10. Verify bootloader OTA state, confirm, and verify transition to VALID
+        _otaUpdateState.value = OtaUpdateState.Confirming(targetSlot)
         return performOtaConfirmationWorkflow(
             previousVersion = previousVersion,
             newVer = newVer,
             runningSlot = runningSlot,
-            requireImageDigest = postCaps.supportsOtaImageDigest,
-            expectedDigest = appDigest
+            requireImageDigest = true,
+            expectedDigest = image.runningDigest,
+            expectedLinkGeneration = postLinkGeneration
         )
     }
 
@@ -2663,7 +2690,8 @@ class BlePulseShiftRepository(
         newVer: String,
         runningSlot: Int,
         requireImageDigest: Boolean = false,
-        expectedDigest: ByteArray? = null
+        expectedDigest: ByteArray? = null,
+        expectedLinkGeneration: Long = configLinkGeneration.get()
     ): Boolean {
         // Step 8: Ask the firmware what the bootloader actually thinks.
         val statusSeq = nextSeq()
@@ -2707,6 +2735,10 @@ class BlePulseShiftRepository(
         }
 
         // Step 9: Explicitly confirm only after authentication and initial PENDING_VERIFY verification.
+        if (configLinkGeneration.get() != expectedLinkGeneration || !_isAuthenticated.value) {
+            _otaUpdateState.value = OtaUpdateState.Failed("The owner connection changed. Confirmation withheld.", false)
+            return false
+        }
         val confirmed = confirmOtaUpdate()
 
         // Step 10: Mandatory final readback: Query OTA_STATUS to verify the bootloader transitioned to VALID (2).
@@ -2719,7 +2751,8 @@ class BlePulseShiftRepository(
             5000L
         )
         if (verifyAck == null || verifyAck.statusCode != PulseShiftBleProtocol.STATUS_SUCCESS ||
-            verifyAck.payload.size < 8 || verifyAck.payload[1].toInt() != runningSlot) {
+            verifyAck.payload.size < 8 || verifyAck.payload[1].toInt() != runningSlot ||
+            configLinkGeneration.get() != expectedLinkGeneration) {
             _otaUpdateState.value = OtaUpdateState.Failed(
                 if (!confirmed) {
                     "Post-update confirmation failed: ${lastOtaConfirmError ?: "unknown error"} and final status readback failed. " +
@@ -2775,7 +2808,7 @@ class BlePulseShiftRepository(
         imageBytes: ByteArray, targetSlot: Int, address: String, linkGeneration: Long
     ): Boolean = coroutineScope {
         val transfer = ActiveOtaTransfer(async(start = CoroutineStart.LAZY) {
-            sendOtaData(imageBytes, targetSlot)
+            sendOtaData(imageBytes, targetSlot, linkGeneration)
         })
         otaDataTransfer.set(transfer)
         _otaUpdateState.value = OtaUpdateState.Transferring(0L, imageBytes.size.toLong(), 0.0f, targetSlot)
@@ -2816,13 +2849,16 @@ class BlePulseShiftRepository(
         }
     }
 
-    private suspend fun sendOtaData(imageBytes: ByteArray, targetSlot: Int): String? {
+    private suspend fun sendOtaData(imageBytes: ByteArray, targetSlot: Int, linkGeneration: Long): String? {
         val mtu = bleManager.currentMtu.value
         val chunkSize = if (mtu >= 64) minOf(mtu - 15, 230) else 11
         val totalChunks = (imageBytes.size + chunkSize - 1) / chunkSize
         var bytesSent = 0L
         for (chunkIdx in 0 until totalChunks) {
             currentCoroutineContext().ensureActive()
+            if (configLinkGeneration.get() != linkGeneration || !_isAuthenticated.value) {
+                return "The owner connection was lost during transfer."
+            }
             val offset = chunkIdx * chunkSize
             val len = minOf(chunkSize, imageBytes.size - offset)
             val chunk = imageBytes.copyOfRange(offset, offset + len)

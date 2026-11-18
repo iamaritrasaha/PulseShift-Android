@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,14 +47,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulseshift.app.data.ble.BleConnectionState
 import com.pulseshift.app.domain.model.BleDevice
+import com.pulseshift.app.domain.model.LiveTelemetrySnapshot
+import com.pulseshift.app.domain.model.telemetryClockMs
 import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
@@ -66,6 +73,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
+import kotlinx.coroutines.delay
 import com.pulseshift.app.ui.components.LedStripPreview
 import com.pulseshift.app.ui.components.PulseShiftSlider
 import com.pulseshift.app.ui.components.SectionCard
@@ -107,10 +115,22 @@ fun HomeScreen(
     val lighting by viewModel.lightingState.collectAsState()
     val device by viewModel.connectedDevice.collectAsState()
     val rpm by viewModel.rpmTelemetryState.collectAsState()
+    val canHealth by viewModel.canHealthState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val telemetryConnected = connectionState == BleConnectionState.READY ||
+        connectionState == BleConnectionState.RECEIVING_TELEMETRY ||
+        connectionState == BleConnectionState.CONNECTED_WAITING_FOR_DATA
+    var clockMs by remember { mutableLongStateOf(telemetryClockMs()) }
+    LaunchedEffect(telemetryConnected) {
+        while (telemetryConnected) {
+            clockMs = telemetryClockMs()
+            delay(250)
+        }
+    }
+    val live = LiveTelemetrySnapshot.from(rpm, canHealth, telemetryConnected, maxOf(clockMs, telemetryClockMs()))
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val presets by viewModel.presets.collectAsState()
     val unsaved by viewModel.hasUnsavedChanges.collectAsState()
-    val connectionState by viewModel.connectionState.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
     val reconnecting by viewModel.isReconnecting.collectAsState()
     val syncErrors = viewModel.lightingSyncError
@@ -140,15 +160,18 @@ fun HomeScreen(
                     onNavigateToDevices = onNavigateToDevices
                 )
             }
+            item { BatteryVoltageCard(live, telemetryConnected) }
             item {
                 RpmGaugeCard(
-                    rpm = rpm,
+                    rpm = rpm.takeIf { live.hasFreshRpmPacket },
                     shiftConfig = shiftConfig,
                     lighting = lighting,
                     onNavigateToRpm = onNavigateToRpm,
                     onNavigateToLighting = onNavigateToLighting
                 )
             }
+            item { ControllerHealthCard(live, telemetryConnected) }
+            item { CaptureStorageCard(live) }
             item {
                 LightControlCard(
                     lighting = lighting,
@@ -276,6 +299,7 @@ private fun ConnectionBanner(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RpmGaugeCard(
     rpm: RpmTelemetryState?,
@@ -298,43 +322,27 @@ private fun RpmGaugeCard(
         val currentRpm = if (available) rpm!!.provisionalRpm else 0
         val lightsRendering = rpm?.statusFlags?.isPhysicalShiftLightsEnabled == true
 
-        // 1. Digital RPM Speedometer Readout
-        Row(
-            verticalAlignment = Alignment.Bottom,
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel),
+            verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.SmallLabel),
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = if (available) String.format(Locale.US, "%,d", currentRpm) else "--",
+                text = if (available) String.format(Locale.US, "%,d", currentRpm) else "—",
                 style = PulseShiftMonoDisplay,
-                color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterVertically)
             )
-            Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
-            Text(
-                "RPM",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
+            Text("RPM", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.CenterVertically))
+            StatusPill(
+                text = when {
+                    rpm == null -> "No signal"
+                    available -> "Signal fresh"
+                    else -> "RPM unavailable"
+                },
+                color = if (available) HardwareGreenVerified else HardwareAmberWarning,
+                modifier = Modifier.align(Alignment.CenterVertically)
             )
-            Spacer(Modifier.weight(1f))
-            Column(horizontalAlignment = Alignment.End) {
-                StatusPill(
-                    text = when {
-                        rpm == null -> "NO SIGNAL"
-                        !rpm.statusFlags.isCandidateFresh -> "CAN STALE"
-                        else -> "SIGNAL FRESH"
-                    },
-                    color = when {
-                        rpm == null || !rpm.statusFlags.isCandidateFresh -> HardwareRedError
-                        else -> HardwareGreenVerified
-                    }
-                )
-                Spacer(Modifier.height(PulseShiftSpacing.Micro))
-                Text(
-                    text = if (rpm == null) "CAN RX: --" else "CAN RX: ${rpm.totalCanFramesReceived}",
-                    style = PulseShiftMonoTiny,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -513,6 +521,73 @@ private fun RpmGaugeCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun BatteryVoltageCard(state: LiveTelemetrySnapshot, connected: Boolean) {
+    SectionCard(title = "Live Vehicle Data") {
+        Text("Battery voltage · EXPERIMENTAL", style = MaterialTheme.typography.labelLarge)
+        val volts = state.batteryVolts
+        Text(
+            text = volts?.let { String.format(Locale.US, "%.1f V", it) } ?: "— V",
+            style = PulseShiftMonoLarge,
+            color = if (volts != null) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val raw = state.voltageCandidateRaw
+        Text(
+            text = if (raw != null) "CAN 0x303 · Byte 1 · Raw 0x%02X".format(Locale.US, raw)
+                else when {
+                    !connected -> "Connect to the ESP32 for live voltage."
+                    state.hasFreshRpmPacket && !state.voltageProbeSupported ->
+                        "The installed firmware does not report this signal."
+                    else -> "Waiting for a supported, fresh CAN signal."
+                },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (raw != null) {
+            Text("Live · Uncalibrated estimate", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun ControllerHealthCard(state: LiveTelemetrySnapshot, connected: Boolean) {
+    SectionCard(title = "CAN & Controller") {
+        Text(if (connected) "BLE connected" else "BLE disconnected")
+        LiveMetricRow("CAN frames received", state.receivedFrames?.toString() ?: "—")
+        LiveMetricRow("CAN traffic", state.trafficActive?.let { if (it) "Recent traffic" else "Idle" } ?: "—")
+        LiveMetricRow("CAN bus", state.canHealthy?.let { if (it) "Operational" else "Unavailable" } ?: "—")
+        LiveMetricRow("ESP32 uptime", state.uptimeSeconds?.let { "$it s" } ?: "—")
+    }
+}
+
+@Composable
+private fun CaptureStorageCard(state: LiveTelemetrySnapshot) {
+    SectionCard(title = "Recording & Storage") {
+        LiveMetricRow("Recording", state.recordingActive?.let { if (it) "Active" else "Stopped" } ?: "—")
+        LiveMetricRow("Session frames", state.recordedThisSession?.toString() ?: "—")
+        LiveMetricRow("Prior capture", state.capturePreserved?.let { if (it) "Preserved" else "None reported" } ?: "—")
+        LiveMetricRow("LittleFS", when {
+            state.storageMounted == null -> "—"
+            !state.storageMounted -> "Unavailable"
+            state.storageFull == true -> "Full"
+            else -> "Mounted"
+        })
+    }
+}
+
+@Composable
+private fun LiveMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.End)
     }
 }
 

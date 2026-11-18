@@ -410,7 +410,7 @@ fun PresetListItem(
                 ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
-                    Text("Apply to ESP32")
+                    Text("Apply & Save to ESP32")
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro)) {

@@ -3,7 +3,7 @@ package com.pulseshift.app.domain.model
 /**
  * Full device report parsed from the firmware GET_DIAGNOSTICS (0x50) TLV blob
  * streamed over the config snapshot characteristic. Mirrors the TLV IDs
- * documented in docs/BLE-PROTOCOL.md (BLE_DIAG_TLV_* 0x40-0x49).
+ * documented in docs/BLE-PROTOCOL.md (BLE_DIAG_TLV_* 0x40-0x4A).
  */
 data class DiagnosticsReport(
     val snapshotId: Int,
@@ -67,7 +67,8 @@ data class DiagnosticsReport(
     val calVerified: Boolean = false,
     val calPointsUsed: Int = 0,
     val calMaxResidualRpm: Int = 0,
-    val calFingerprint: Long = 0
+    val calFingerprint: Long = 0,
+    val experimentalCanBytes: List<Int?>? = null
 ) {
     val isValid: Boolean get() = uptimeMs > 0 || canTotalRx > 0 || storageTotal > 0
 
@@ -175,6 +176,12 @@ data class DiagnosticsReport(
                         calPointsUsed = v[6].toInt() and 0xFF,
                         calMaxResidualRpm = v[7].toInt() and 0xFF,
                         calFingerprint = u32(v, 8)
+                    )
+                    0x4A -> if (len == 5) r = r.copy(
+                        experimentalCanBytes = List(4) { index ->
+                            (v[1 + index].toInt() and 0xFF)
+                                .takeIf { (v[0].toInt() and (1 shl index)) != 0 }
+                        }
                     )
                     // Unknown TLVs are tolerated (forward compatibility).
                 }
