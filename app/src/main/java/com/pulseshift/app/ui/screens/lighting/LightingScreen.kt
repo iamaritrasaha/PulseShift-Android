@@ -150,7 +150,7 @@ fun LightingScreen(
             text = {
                 Column {
                     Text(
-                        "Saves all current colors, effect, speed, brightness, direction, startup animation, and RPM thresholds into your local Preset library.",
+                        "Saves this configuration to the phone\'s local Preset library. To keep the active lighting on the ESP32 after reboot, also tap Save Changes to ESP32 Flash (NVS).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
