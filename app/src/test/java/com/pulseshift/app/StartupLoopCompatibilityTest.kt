@@ -52,6 +52,6 @@ class StartupLoopCompatibilityTest {
     @Test
     fun presetFeedbackDistinguishesSavedFromRamOnly() {
         assertTrue(PresetApplyResult.PERSISTED.message("Sample").contains("saved to ESP32 NVS"))
-        assertTrue(PresetApplyResult.READBACK_CONFIRMED.message("Sample").contains("flash save unconfirmed"))
+        assertTrue(PresetApplyResult.READBACK_CONFIRMED.message("Sample").contains("NVS save unconfirmed"))
     }
 }
