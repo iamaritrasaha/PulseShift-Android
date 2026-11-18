@@ -933,6 +933,10 @@ class BlePulseShiftRepository internal constructor(
         } else {
             animation
         }
+        if ((durationMs and 0x8000) != 0 && caps?.supportsLoopingStartup != true) {
+            _lightingError.tryEmit("Continuous startup animation requires updated ESP32 firmware.")
+            return
+        }
         writeLightingCommand(
             "startup animation", PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP,
             { seq -> PulseShiftBleProtocol.buildSetStartupV2(seq, effectiveAnim.id, durationMs) },
@@ -1274,6 +1278,10 @@ class BlePulseShiftRepository internal constructor(
             }
             if (!requireAuthenticated()) {
                 failPreset("Owner authentication required to apply presets.")
+            }
+            if ((preset.startupDurationMs and 0x8000) != 0 &&
+                bleManager.connectedDevice.value?.capabilities?.supportsLoopingStartup != true) {
+                failPreset("Continuous animation preset requires updated ESP32 firmware.")
             }
 
             val previousState = _lightingState.value
