@@ -1547,20 +1547,20 @@ class BlePulseShiftRepository internal constructor(
             val assignedId = if (preset.id.isNotBlank()) preset.id else UUID.randomUUID().toString()
             list.add(preset.copy(id = assignedId, isCustom = true))
         }
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
     }
 
     override suspend fun deletePreset(id: String) {
         val list = _presets.value.toMutableList()
         list.removeAll { it.id == id && it.isCustom }
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
     }
 
     override suspend fun restoreDefaultPresets() {
-        _presets.value = Preset.DefaultPresets
         persistCustomPresets(emptyList())
+        _presets.value = Preset.DefaultPresets
     }
 
     override suspend fun updatePreset(preset: Preset) {
@@ -1568,8 +1568,8 @@ class BlePulseShiftRepository internal constructor(
         val index = list.indexOfFirst { it.id == preset.id }
         if (index >= 0) {
             list[index] = preset.copy(isCustom = true)
-            _presets.value = list
             persistCustomPresets(list)
+            _presets.value = list
         }
     }
 
@@ -1582,8 +1582,8 @@ class BlePulseShiftRepository internal constructor(
         )
         val list = _presets.value.toMutableList()
         list.add(newPreset)
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
         return newPreset
     }
 
@@ -1606,8 +1606,8 @@ class BlePulseShiftRepository internal constructor(
         )
         val list = _presets.value.toMutableList()
         list.add(newPreset)
-        _presets.value = list
         persistCustomPresets(list)
+        _presets.value = list
         return newPreset
     }
 
