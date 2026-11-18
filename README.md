@@ -62,6 +62,27 @@ Physical OTA and rollback require bench validation with stable power and USB rec
 
 ---
 
+### Continuous Startup Animation and Persistent Presets
+
+Compatible firmware advertises BLE capability bit 20, enabling a **Loop continuously**
+switch under Lighting Studio > Startup. When off, the ignition animation plays
+once for the selected cycle duration (100 ms-10 s). When on, it repeats while
+parked and yields to RPM lighting, missing-signal safeguards, power-off, faults,
+and the authorization/bench-test layers. The loop setting uses bit 15 of the
+existing 16-bit startup duration, preserving the storage schema and older
+configurations; the app gates writes when connected firmware lacks support.
+
+**Phone preset library vs ESP32 persistence are different.** Saving a preset
+to the library stores it on the phone. Selecting **Apply & Save to ESP32**
+stages and commits the preset, verifies an authoritative device snapshot, then
+requires an acknowledged `SAVE_CONFIG` NVS write before reporting it saved for
+reboot. Failed or uncertain saves remain RAM-only and display an explicit warning.
+The existing "Save Changes to ESP32 Flash (NVS)" action remains available for
+individual lighting adjustments. The updated firmware and Android build are
+needed for looping; no automatic physical update or data erase occurs.
+
+---
+
 ## 1. Architecture & Design Principles
 
 The Android application is designed around modern Android development standards and robust embedded integration:
