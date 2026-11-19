@@ -7,6 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +47,7 @@ fun LedStripPreview(
     val effectiveColors = if (isPowerOn) {
         colors
     } else {
-        List(6) { RgbColor(30, 30, 35) }
+        List(colors.size) { RgbColor(30, 30, 35) }
     }
 
     Box(
@@ -60,11 +63,13 @@ fun LedStripPreview(
         ) {
             // WS2812B Physical Mounting Rail Representation
             val isAllSelected = selectedIndex == null || selectedIndex == -1
+            val railWidth = if (effectiveColors.size > 8) {
+                Modifier.horizontalScroll(rememberScrollState()).width((effectiveColors.size * 40 + 20).dp)
+            } else Modifier.fillMaxWidth()
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
+                modifier = railWidth
                     .height(72.dp)
                     .background(Color(0xFF18171E), RoundedCornerShape(14.dp))
                     .border(
@@ -104,7 +109,7 @@ fun LedStripPreview(
                             ) { onSelectLed(index) }
                     ) {
                         // Photorealistic Diffuser Glow Canvas
-                        Canvas(modifier = Modifier.size(48.dp)) {
+                        Canvas(modifier = Modifier.size(36.dp)) {
                             val center = Offset(size.width / 2, size.height / 2)
                             val radius = size.minDimension / 2.6f
 

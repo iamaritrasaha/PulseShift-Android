@@ -38,12 +38,12 @@ class PresetsViewModel(
         _persistenceError.value = null
     }
 
-    fun applyPreset(preset: Preset) {
+    fun applyPreset(preset: Preset, permanent: Boolean = false) {
         viewModelScope.launch {
             if (_isBusy.value) return@launch
             _isBusy.value = true
             try {
-                val result = repository.applyPreset(preset)
+                val result = repository.applyPreset(preset, permanent)
                 _userMessage.tryEmit(result.message(preset.name))
             } catch (e: CancellationException) {
                 throw e

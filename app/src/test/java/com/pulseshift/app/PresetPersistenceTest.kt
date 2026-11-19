@@ -277,10 +277,8 @@ class PresetPersistenceTest {
             val message = feedback.await()
             when (outcome) {
                 PresetApplyResult.PERSISTED -> assertTrue(message.contains("saved to ESP32 NVS"))
-                PresetApplyResult.READBACK_CONFIRMED -> {
-                    assertTrue(message.contains("active in RAM"))
-                    assertTrue(message.contains("NVS save unconfirmed"))
-                }
+                PresetApplyResult.READBACK_CONFIRMED -> assertTrue(message.contains("applied temporarily"))
+                PresetApplyResult.SAVE_UNCONFIRMED -> assertTrue(message.contains("could not be verified"))
                 PresetApplyResult.APPLIED_NEEDS_READBACK -> assertTrue(message.contains("resync and save"))
                 PresetApplyResult.COMMIT_UNKNOWN -> assertTrue(message.contains("commit unverified"))
             }
@@ -542,22 +540,22 @@ class FakePulseShiftRepository : PulseShiftRepository {
     override suspend fun enrollOwner(secret: ByteArray): Boolean = false
     override suspend fun authenticateChallengeResponse(): Boolean = false
     override suspend fun clearStoredOwnerCredential(): Boolean = false
-    override suspend fun setPower(power: Boolean) {}
-    override suspend fun setBrightness(brightness: Int) {}
+    override suspend fun setPower(power: Boolean): Boolean = true
+    override suspend fun setBrightness(brightness: Int): Boolean = true
     override suspend fun setEffect(effect: EffectType): Boolean = true
-    override suspend fun setEffectSpeed(speed: Int) {}
-    override suspend fun setGlobalColor(color: RgbColor) {}
-    override suspend fun setIndividualLedColor(index: Int, color: RgbColor) {}
+    override suspend fun setEffectSpeed(speed: Int): Boolean = true
+    override suspend fun setGlobalColor(color: RgbColor): Boolean = true
+    override suspend fun setIndividualLedColor(index: Int, color: RgbColor): Boolean = true
     override suspend fun setAllLedColors(colors: List<RgbColor>) {}
-    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {}
-    override suspend fun setLedDirection(direction: Int) {}
-    override suspend fun setWarningRgb(color: RgbColor) {}
+    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int): Boolean = true
+    override suspend fun setLedDirection(direction: Int): Boolean = true
+    override suspend fun setWarningRgb(color: RgbColor): Boolean = true
     override suspend fun updateShiftLightConfig(config: ShiftLightConfig) {}
-    override suspend fun setLedThreshold(index: Int, rpm: Int) {}
+    override suspend fun setLedThreshold(index: Int, rpm: Int): Boolean = true
     override suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float) {}
     override suspend fun setRpmHysteresis(hysteresisRpm: Int) {}
 
-    override suspend fun applyPreset(preset: Preset): PresetApplyResult {
+    override suspend fun applyPreset(preset: Preset, permanent: Boolean): PresetApplyResult {
         if (shouldFailApply) {
             throw IllegalStateException(applyFailureMessage)
         }

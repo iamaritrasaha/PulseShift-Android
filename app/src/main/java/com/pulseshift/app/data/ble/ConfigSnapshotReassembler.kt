@@ -2,6 +2,7 @@ package com.pulseshift.app.data.ble
 
 import android.util.Log
 import com.pulseshift.app.domain.model.ConfigSnapshot
+import com.pulseshift.app.domain.model.StripConfiguration
 import com.pulseshift.app.domain.model.DiagnosticsReport
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.RgbColor
@@ -157,6 +158,8 @@ class ConfigSnapshotReassembler {
         var rpmOffset = 0.0f
         var rpmMaxValid = 12000
         var calibrationVerified = false
+        var strip: StripConfiguration? = null
+        var matchesFlash: Boolean? = null
 
         while (offset + 2 <= dataLen) {
             val settingId = bytes[offset].toInt() and 0xFF
@@ -305,6 +308,27 @@ class ConfigSnapshotReassembler {
                     if (len != 2) return null
                     rpmHysteresis = (valBytes[0].toInt() and 0xFF) or ((valBytes[1].toInt() and 0xFF) shl 8)
                 }
+                0x1F -> {
+                    if (len == 0) return null
+                    if (valBytes[0].toInt() == 1) {
+                        if (len != 5) return null
+                        val configured = valBytes[1].toInt() and 0xFF
+                        val running = valBytes[2].toInt() and 0xFF
+                        val minimum = valBytes[3].toInt() and 0xFF
+                        val maximum = valBytes[4].toInt() and 0xFF
+                        val range = minimum..maximum
+                        if (minimum !in 1..64 || maximum !in minimum..64 ||
+                            configured !in range || running !in range) return null
+                        strip = StripConfiguration(configured, running, range)
+                    }
+                }
+                0x20 -> {
+                    if (len == 0) return null
+                    if (valBytes[0].toInt() == 1) {
+                        if (len != 2 || valBytes[1].toInt() !in 0..1) return null
+                        matchesFlash = valBytes[1].toInt() == 1
+                    }
+                }
                 else -> {
                     // Forward compatibility: tolerate unknown TLVs (log and skip).
                     logW("ConfigSnapshot", "Unknown TLV 0x${settingId.toString(16)} (len $len) skipped")
@@ -349,7 +373,9 @@ class ConfigSnapshotReassembler {
             rpmOffset = rpmOffset,
             rpmMaxValid = rpmMaxValid,
             calibrationVerified = calibrationVerified,
-            isValid = true
+            isValid = true,
+            strip = strip,
+            matchesFlash = matchesFlash
         )
     }
 

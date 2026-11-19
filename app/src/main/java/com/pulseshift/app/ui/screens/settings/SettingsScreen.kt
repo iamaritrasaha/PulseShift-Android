@@ -43,6 +43,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -85,11 +89,25 @@ fun SettingsScreen(
     val connectedDevice by viewModel.connectedDevice.collectAsState()
     val authenticated by viewModel.isAuthenticated.collectAsState()
     val otaState by viewModel.otaUpdateState.collectAsState()
+    val snapshot by viewModel.configSnapshot.collectAsState()
+    val stripSave by viewModel.stripSave.collectAsState()
 
     var showOtaPreflight by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(viewModel) {
+        viewModel.saveErrors.collect { snackbar.showSnackbar(it) }
+    }
+    LaunchedEffect(stripSave) {
+        if (stripSave == SettingsViewModel.StripSaveState.Saved) {
+            snackbar.showSnackbar("LED count saved. Power-cycle the ESP32 to apply it.")
+            viewModel.acknowledgeStripSave()
+        } else if (stripSave == SettingsViewModel.StripSaveState.Unconfirmed) {
+            snackbar.showSnackbar("LED count save unconfirmed.")
+            viewModel.acknowledgeStripSave()
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -214,6 +232,54 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+
+            val strip = snapshot?.strip?.takeIf { connectedDevice?.capabilities?.supportsStripConfig == true }
+            if (strip != null) {
+                var countInput by remember(connectedDevice?.address, strip.configuredCount) {
+                    mutableStateOf(strip.configuredCount.toString())
+                }
+                val count = countInput.toIntOrNull()
+                val valid = count != null && count in strip.range
+                val saving = stripSave == SettingsViewModel.StripSaveState.Saving
+                Card(modifier = Modifier.fillMaxWidth(), shape = PulseShiftShapeTokens.Card) {
+                    Column(Modifier.padding(PulseShiftSpacing.CardPadding),
+                        verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
+                        Text("Physical LED Strip", style = MaterialTheme.typography.titleMedium)
+                        Text("Controller range ${strip.range.first}–${strip.range.last} LEDs. Running ${strip.runningCount}.")
+                        if (strip.runningCount != strip.configuredCount) {
+                            Text("Configured for ${strip.configuredCount} LEDs at next boot. Confirm the save before restarting.")
+                        }
+                        OutlinedTextField(
+                            value = countInput,
+                            onValueChange = { input ->
+                                if (input.length <= 2 && input.all { it in '0'..'9' }) countInput = input
+                            },
+                            label = { Text("WS2812B LED count") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            isError = countInput.isNotEmpty() && !valid,
+                            enabled = authenticated && !saving
+                        )
+                        if (valid) {
+                            Text("Budget up to ${String.format(java.util.Locale.US, "%.2f", count * 0.06)} A at 5 V for full white (60 mA per LED).")
+                        }
+                        if (count != null && count > 6) {
+                            Text("Verify strip timing with BLE active before using this LED count.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Actual current depends on color and brightness. Use a separately sized 5 V strip supply with a common ground. GPIO27 is data only.", style = MaterialTheme.typography.bodySmall)
+                        Button(
+                            enabled = valid && authenticated && !saving,
+                            onClick = { count?.let(viewModel::saveLedCount) }
+                        ) {
+                            Text(if (saving) "Saving…" else "Save LED count to ESP32")
+                        }
+                    }
+                }
+            } else if (connectedDevice?.isConnected == true &&
+                connectedDevice?.capabilities?.hasConfigV2Support == true &&
+                connectedDevice?.capabilities?.supportsStripConfig == false) {
+                Text("LED count is fixed on this firmware. Update the ESP32 to change it.")
             }
 
             // Firmware & OTA Updates Section

@@ -6,6 +6,9 @@ import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.DeviceCapabilities
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.StartupAnimation
+import com.pulseshift.app.domain.model.StripConfiguration
+import com.pulseshift.app.domain.model.LightingState
+import com.pulseshift.app.domain.model.RgbColor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -281,6 +284,9 @@ class ProtocolV2CodecTest {
         // 0x1B: Warning RGB = Red (255, 0, 0)
         tlvBuffer.put(0x1B.toByte()); tlvBuffer.put(3.toByte()); tlvBuffer.put(255.toByte()); tlvBuffer.put(0.toByte()); tlvBuffer.put(0.toByte())
 
+        // The additive TLVs leave the six logical zone colors and six RPM stages intact.
+        tlvBuffer.put(byteArrayOf(0x1F, 5, 1, 64, 6, 1, 64, 0x20, 2, 1, 1))
+
         val payloadSize = tlvBuffer.position()
         val rawDataWithoutCrc = ByteArray(payloadSize)
         System.arraycopy(tlvBuffer.array(), 0, rawDataWithoutCrc, 0, payloadSize)
@@ -339,6 +345,10 @@ class ProtocolV2CodecTest {
         assertEquals(75, snapshot.effectSpeed)
         assertEquals(40.0f, snapshot.rpmMultiplier, 0.01f)
         assertEquals(0x301L, snapshot.canCandidateId)
+        assertEquals(StripConfiguration(64, 6, 1..64), snapshot.strip)
+        assertEquals(true, snapshot.matchesFlash)
+        assertEquals(6, snapshot.ledColors.size)
+        assertEquals(6, snapshot.rpmThresholds.size)
     }
 
     @Test
@@ -630,4 +640,35 @@ class ProtocolV2CodecTest {
         assertEquals(0.toByte(), extOtaData[9])
         assertEquals(1.toByte(), extOtaData[10])
     }
+    @Test
+    fun stripExtensionsRequireTheFeatureAndProtocolMinor() {
+        val packet = ByteArray(20)
+        packet[0] = 2
+        packet[1] = 32
+        packet[4] = 0x60
+        packet[18] = 3
+        assertFalse(PulseShiftBleProtocol.parseCapabilitiesV2(packet)!!.supportsStripConfig)
+        packet[18] = 4
+        val caps = PulseShiftBleProtocol.parseCapabilitiesV2(packet)!!
+        assertTrue(caps.supportsStripConfig)
+        assertTrue(caps.supportsVerifiedSave)
+        assertEquals(32, caps.physicalLedCount)
+        val command = PulseShiftBleProtocol.buildSetLedCountV2(42, 64)
+        assertEquals(PulseShiftBleProtocol.V2_OPCODE_SET_LED_COUNT, command[1])
+        assertTrue(command.copyOfRange(4, 8).contentEquals(byteArrayOf(2, 0, 1, 64)))
+        assertEquals(6, PulseShiftBleProtocol.buildSaveConfigV2(42).size)
+    }
+
+    @Test
+    fun previewExpandsSixZonesToEachPhysicalCountAndReversesTheWholeStrip() {
+        val colors = List(6) { zone -> RgbColor(zone + 1, 0, 0) }
+        for (count in listOf(1, 2, 3, 6, 12, 24, 32, 64)) {
+            val strip = LightingState(ledColors = colors, physicalLedCount = count)
+            val pixels = strip.physicalLedColors
+            assertEquals(count, pixels.size)
+            assertEquals(List(count) { i -> colors[i * 6 / count] }, pixels)
+            assertEquals(pixels.reversed(), strip.copy(ledDirection = 1).physicalLedColors)
+        }
+    }
+
 }

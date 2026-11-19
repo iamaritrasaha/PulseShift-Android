@@ -68,7 +68,8 @@ data class DiagnosticsReport(
     val calPointsUsed: Int = 0,
     val calMaxResidualRpm: Int = 0,
     val calFingerprint: Long = 0,
-    val experimentalCanBytes: List<Int?>? = null
+    val experimentalCanBytes: List<Int?>? = null,
+    val configNvs: ConfigNvsDiagnostics? = null
 ) {
     val isValid: Boolean get() = uptimeMs > 0 || canTotalRx > 0 || storageTotal > 0
 
@@ -177,6 +178,11 @@ data class DiagnosticsReport(
                         calMaxResidualRpm = v[7].toInt() and 0xFF,
                         calFingerprint = u32(v, 8)
                     )
+                    0x4B -> if (len == 8 && v[0].toInt() == 1) r = r.copy(
+                        configNvs = ConfigNvsDiagnostics(
+                            v[1].toInt() and 0xFF, v[2].toInt() and 0xFF, v[3].toInt() == 1, u32(v, 4)
+                        )
+                    )
                     0x4A -> if (len == 5) r = r.copy(
                         experimentalCanBytes = List(4) { index ->
                             (v[1 + index].toInt() and 0xFF)
@@ -189,5 +195,29 @@ data class DiagnosticsReport(
             }
             return r
         }
+    }
+}
+
+
+data class ConfigNvsDiagnostics(val boot: Int, val save: Int, val matchesActive: Boolean, val revision: Long) {
+    val bootDescription: String get() = when (boot) {
+        0 -> "NVS unavailable"
+        1 -> "No saved configuration"
+        2 -> "Loaded and validated from flash"
+        3 -> "Loaded previous schema"
+        4 -> "New record invalid. Recovered previous schema"
+        5 -> "Saved record invalid. Using defaults"
+        6 -> "Invalid LED count. Using six LEDs"
+        else -> "Unknown boot status"
+    }
+
+    val saveDescription: String get() = when (save) {
+        0 -> "No save attempted since boot"
+        1 -> "Flash readback verified"
+        2 -> "Could not open NVS"
+        3 -> "Flash write or commit failed"
+        4 -> "Flash readback verification failed"
+        5 -> "Configuration validation failed"
+        else -> "Unknown save status"
     }
 }

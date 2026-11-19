@@ -176,7 +176,7 @@ fun LightingScreen(
                     },
                     enabled = newPresetName.isNotBlank()
                 ) {
-                    Text("Save Preset")
+                    Text("Save Preset to Phone")
                 }
             },
             dismissButton = {
@@ -268,19 +268,21 @@ fun LightingScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         LedStripPreview(
-                            colors = lighting.ledColors,
+                            colors = lighting.physicalLedColors,
                             isPowerOn = lighting.isPowerOn,
                             brightness = lighting.brightness,
-                            selectedIndex = selectedLed,
+                            selectedIndex = (0 until lighting.physicalLedCount)
+                                .firstOrNull { lighting.zoneAtPixel(it) == selectedLed },
                             onSelectLed = { index ->
-                                if (selectedLed == index) viewModel.selectLed(-1)
-                                else viewModel.selectLed(index)
+                                val zone = lighting.zoneAtPixel(index)
+                                viewModel.selectLed(if (selectedLed == zone) -1 else zone)
                             }
                         )
+                        Text("Zone colors", style = MaterialTheme.typography.labelMedium)
 
                         Spacer(Modifier.height(10.dp))
 
-                        // Segmented LED Selector Bar: [ALL 6] [1] [2] [3] [4] [5] [6]
+                        // Six logical color zones
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -302,7 +304,7 @@ fun LightingScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
-                                        "ALL 6",
+                                        "ALL",
                                         style = PulseShiftMonoTiny,
                                         fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isAllSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -310,7 +312,7 @@ fun LightingScreen(
                                 }
                             }
 
-                            // Individual LED 1..6 Chips with Color Dot
+                            // Zone chips
                             for (i in 0 until 6) {
                                 val isSelected = (selectedLed == i)
                                 val ledColor = lighting.ledColors.getOrElse(i) { RgbColor.NeonGreen }
