@@ -51,6 +51,7 @@ internal fun RpmMappingEditor(
     val physical = snapshot.strip?.runningCount ?: return
     val active = setup.mapping.activeCount(minOf(physical, setup.installedLedCount))
     val configuredActive = setup.mapping.activeCount(setup.installedLedCount)
+    val mappedActive = if (active == configuredActive) setup.mapping.activeLedCount else active
     if (configuredActive > active && setup.mapping.mode != RpmMappingMode.LEGACY_GROUPED &&
         setup.mapping.mode != RpmMappingMode.AUTOMATIC) {
         Text("Restart the ESP32 to edit the saved $configuredActive-pixel mapping. The running strip currently controls $active active LEDs.")
@@ -89,8 +90,8 @@ internal fun RpmMappingEditor(
     val endIndex = (lastSelected.toIntOrNull() ?: 0) - 1
     val mapping = when (mode) {
         RpmMappingMode.AUTOMATIC -> RpmMapping(mode, setup.mapping.activeLedCount, listOf(min ?: -1, max ?: -1))
-        RpmMappingMode.INDIVIDUAL -> RpmMapping(mode, active, levels)
-        else -> RpmMapping(mode, active, levels, groups)
+        RpmMappingMode.INDIVIDUAL -> RpmMapping(mode, mappedActive, levels)
+        else -> RpmMapping(mode, mappedActive, levels, groups)
     }
     val draftValid = warningRpm != null && mapping.valid(setup.installedLedCount, warningRpm)
 

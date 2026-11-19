@@ -41,11 +41,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PulseShiftNavigationTest {
     @get:Rule(order = 0)
-    val bluetoothPermissions: GrantPermissionRule = if (Build.VERSION.SDK_INT >= 31) {
-        GrantPermissionRule.grant(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-    } else {
-        GrantPermissionRule.grant(Manifest.permission.ACCESS_FINE_LOCATION)
-    }
+    val startupPermissions: GrantPermissionRule = GrantPermissionRule.grant(*buildList {
+        if (Build.VERSION.SDK_INT >= 31) {
+            add(Manifest.permission.BLUETOOTH_SCAN)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        } else add(Manifest.permission.ACCESS_FINE_LOCATION)
+    }.toTypedArray())
 
     @get:Rule(order = 1)
     val compose = createEmptyComposeRule()
@@ -236,7 +238,7 @@ class PulseShiftNavigationTest {
     @Test
     fun experimentalBatteryCardShowsAnUnavailableValueOfflineAndKeepsItsLabelReadable() {
         launch().use {
-            val batteryLabel = "Battery voltage · EXPERIMENTAL"
+            val batteryLabel = "Battery Voltage"
             compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
                 .performScrollToNode(hasText(batteryLabel))
             compose.onNodeWithText(batteryLabel).performScrollTo().assertIsDisplayed()
