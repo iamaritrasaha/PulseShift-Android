@@ -215,7 +215,7 @@ class PulseShiftNavigationTest {
             selectTab("Presets")
             assertTextFits("Presets Library")
             compose.onNodeWithText("New").performClick()
-            compose.onNodeWithText("Save Preset to Library").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Save Preset to Phone").performScrollTo().assertIsDisplayed()
             pressSystemBackOnModal()
             compose.onNodeWithContentDescription("Presets").assertIsSelected()
             selectTab("Diagnostics")
