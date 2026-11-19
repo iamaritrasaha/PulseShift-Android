@@ -57,8 +57,8 @@ class LiveVehicleDataRenderingTest {
             for (scale in listOf(1f, 2f)) {
                 compose.runOnIdle { configuration.value = dark to scale }
                 for (label in listOf(
-                    "Battery voltage · EXPERIMENTAL", "12.2 V",
-                    "CAN 0x303 · Byte 1 · Raw 0x7A", "Live · Uncalibrated estimate"
+                    "Battery Voltage", "12.2 V",
+                    "CAN 0x303 · Byte 1 · Raw 0x7A", "Live engine battery telemetry"
                 )) {
                     val node = compose.onNodeWithText(label, useUnmergedTree = true)
                     node.performScrollTo().assertIsDisplayed()

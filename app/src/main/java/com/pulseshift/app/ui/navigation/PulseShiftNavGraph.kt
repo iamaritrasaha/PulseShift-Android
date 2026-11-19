@@ -131,7 +131,9 @@ fun PulseShiftNavGraph(
                             },
                             onContinueToHome = {
                                 navController.finishWelcome(connectDevice = false, onComplete = completeOnboarding)
-                            }
+                            },
+                            stripSetup = { com.pulseshift.app.ui.screens.lighting.StripSetupPanel(settingsViewModel) },
+                            onConnectForSetup = { navController.navigate(Screen.Devices.route) { launchSingleTop = true } }
                         )
                     }
 
@@ -150,6 +152,13 @@ fun PulseShiftNavGraph(
                     composable(Screen.Lighting.route) {
                         LightingScreen(
                             viewModel = lightingViewModel,
+                            stripSetup = { com.pulseshift.app.ui.screens.lighting.StripSetupPanel(settingsViewModel) },
+                            rpmEditor = { snapshot ->
+                                val authorized by rpmViewModel.isAuthenticated.collectAsState()
+                                com.pulseshift.app.ui.screens.rpm.RpmMappingEditor(
+                                    snapshot, authorized, rpmViewModel::saveMapping, rpmViewModel::testMapping
+                                )
+                            },
                             onNavigateToPresets = { navController.selectTab(Screen.Presets) },
                             onNavigateBack = { navController.selectTab(Screen.Home) }
                         )
@@ -183,7 +192,11 @@ fun PulseShiftNavGraph(
                     composable(Screen.Devices.route) {
                         DevicesScreen(
                             viewModel = devicesViewModel,
-                            onNavigateBack = { navController.closeDetail(Screen.Devices) }
+                            onNavigateBack = {
+                                if (navController.previousBackStackEntry?.destination?.route == Screen.Onboarding.route) {
+                                    navController.popBackStack()
+                                } else navController.closeDetail(Screen.Devices)
+                            }
                         )
                     }
 

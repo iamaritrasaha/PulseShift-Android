@@ -42,7 +42,9 @@ import com.pulseshift.app.R
 @Composable
 fun OnboardingScreen(
     onConnectDevice: () -> Unit,
-    onContinueToHome: () -> Unit
+    onContinueToHome: () -> Unit,
+    stripSetup: @Composable () -> Unit = {},
+    onConnectForSetup: (() -> Unit)? = null
 ) {
     Scaffold { innerPadding ->
         Column(
@@ -106,6 +108,13 @@ fun OnboardingScreen(
                     title = "3. Save settings to flash NVS",
                     description = "Hardware stores configuration to ESP32 flash memory and operates independently while riding."
                 )
+            }
+
+            stripSetup()
+            if (onConnectForSetup != null) {
+                OutlinedButton(onClick = onConnectForSetup, modifier = Modifier.fillMaxWidth()) {
+                    Text("Connect for strip setup")
+                }
             }
 
             // Actions

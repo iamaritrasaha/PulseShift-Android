@@ -160,6 +160,8 @@ class ConfigSnapshotReassembler {
         var calibrationVerified = false
         var strip: StripConfiguration? = null
         var matchesFlash: Boolean? = null
+        var lightingSetup: com.pulseshift.app.domain.model.LightingSetup? = null
+        var savedInstalledCount: Int? = null
 
         while (offset + 2 <= dataLen) {
             val settingId = bytes[offset].toInt() and 0xFF
@@ -329,6 +331,15 @@ class ConfigSnapshotReassembler {
                         matchesFlash = valBytes[1].toInt() == 1
                     }
                 }
+                0x21 -> {
+                    lightingSetup = LightingSetupCodec.decode(valBytes) ?: return null
+                }
+                0x22 -> {
+                    if (len != 2 || valBytes[0] != LightingSetupCodec.VERSION) return null
+                    val count = valBytes[1].toInt() and 0xff
+                    if (count !in 0..64) return null
+                    savedInstalledCount = count.takeUnless { it == 0 }
+                }
                 else -> {
                     // Forward compatibility: tolerate unknown TLVs (log and skip).
                     logW("ConfigSnapshot", "Unknown TLV 0x${settingId.toString(16)} (len $len) skipped")
@@ -346,6 +357,12 @@ class ConfigSnapshotReassembler {
             return null
         }
 
+        val setup = lightingSetup
+        if (setup != null && (setup.installedLedCount != strip?.configuredCount ||
+                setup.warningRpm != warningRpm || 0x22 !in seenSettingIds ||
+                (matchesFlash == true && savedInstalledCount != setup.installedLedCount) ||
+                (setup.mapping.mode == com.pulseshift.app.domain.model.RpmMappingMode.LEGACY_GROUPED &&
+                    (rpmThresholds?.maxOrNull() ?: Int.MAX_VALUE) > setup.warningRpm))) return null
         return ConfigSnapshot(
             snapshotId = snapshotId,
             schemaVersion = schemaVersion,
@@ -375,7 +392,9 @@ class ConfigSnapshotReassembler {
             calibrationVerified = calibrationVerified,
             isValid = true,
             strip = strip,
-            matchesFlash = matchesFlash
+            matchesFlash = matchesFlash,
+            lightingSetup = setup,
+            savedInstalledLedCount = savedInstalledCount
         )
     }
 

@@ -18,6 +18,13 @@ class RpmViewModel(
     private val repository: PulseShiftRepository
 ) : ViewModel() {
     val connectionState = repository.connectionState
+    val isAuthenticated = repository.isAuthenticated
+    val connectedDevice = repository.connectedDevice
+
+    suspend fun saveMapping(mapping: com.pulseshift.app.domain.model.RpmMapping, warning: Int) =
+        repository.saveLightingSetup { it.copy(mapping = mapping, warningRpm = warning) }
+
+    suspend fun testMapping(rpm: Int) = repository.setLedTestRpm(rpm, true)
     val rpmTelemetryState: StateFlow<RpmTelemetryState?> = repository.rpmTelemetryState
     val configSnapshot: StateFlow<ConfigSnapshot?> = repository.configSnapshot
     val shiftLightConfig: StateFlow<ShiftLightConfig> = repository.shiftLightConfig

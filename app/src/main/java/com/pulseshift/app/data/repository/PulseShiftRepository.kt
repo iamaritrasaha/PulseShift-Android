@@ -7,6 +7,9 @@ import com.pulseshift.app.domain.model.CalibrationFitResult
 import com.pulseshift.app.domain.model.CalibrationSessionStatus
 import com.pulseshift.app.domain.model.CaptureExportState
 import com.pulseshift.app.domain.model.ConfigAckResponse
+import com.pulseshift.app.domain.model.AnimationSettings
+import com.pulseshift.app.domain.model.AnimationStatus
+import com.pulseshift.app.domain.model.LightingSetup
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.DeviceCommandOutcome
 import com.pulseshift.app.domain.model.DiagnosticLogMessage
@@ -89,6 +92,9 @@ interface PulseShiftRepository {
     suspend fun setShiftWarning(rpm: Int, style: Int, color: RgbColor): Boolean = false
     suspend fun setAndSaveLedCount(count: Int): Boolean = false
     suspend fun saveConfigurationToController(): Boolean
+    suspend fun saveLightingSetup(update: (LightingSetup) -> LightingSetup): Boolean = false
+    suspend fun queryAnimationStatus(): AnimationStatus? = null
+    suspend fun previewAnimation(animation: AnimationSettings): Boolean = false
     suspend fun reloadConfigFromController(): ConfigSnapshot?
     suspend fun restoreDefaultControllerConfig()
 

@@ -102,9 +102,12 @@ private val LIGHTING_TABS = listOf(
 @Composable
 fun LightingScreen(
     viewModel: LightingViewModel,
+    stripSetup: @Composable () -> Unit = {},
+    rpmEditor: (@Composable (com.pulseshift.app.domain.model.ConfigSnapshot) -> Unit)? = null,
     onNavigateToPresets: () -> Unit,
     onNavigateBack: () -> Unit = {}
 ) {
+    val device by viewModel.connectedDevice.collectAsState()
     val lighting by viewModel.lightingState.collectAsState()
     val shiftConfig by viewModel.shiftLightConfig.collectAsState()
     val snapshot by viewModel.configSnapshot.collectAsState()
@@ -271,11 +274,12 @@ fun LightingScreen(
                             colors = lighting.physicalLedColors,
                             isPowerOn = lighting.isPowerOn,
                             brightness = lighting.brightness,
-                            selectedIndex = (0 until lighting.physicalLedCount)
-                                .firstOrNull { lighting.zoneAtPixel(it) == selectedLed },
+                            selectedIndex = selectedLed.takeIf { it >= 0 }?.let { zone ->
+                                (0 until lighting.physicalLedCount).firstOrNull { lighting.zoneAtPixel(it) == zone }
+                            },
                             onSelectLed = { index ->
                                 val zone = lighting.zoneAtPixel(index)
-                                viewModel.selectLed(if (selectedLed == zone) -1 else zone)
+                                if (zone >= 0) viewModel.selectLed(if (selectedLed == zone) -1 else zone)
                             }
                         )
                         Text("Zone colors", style = MaterialTheme.typography.labelMedium)
@@ -313,7 +317,10 @@ fun LightingScreen(
                             }
 
                             // Zone chips
-                            for (i in 0 until 6) {
+                            val activeZones = (0 until lighting.activeLedCount).map {
+                                com.pulseshift.app.domain.model.ledZoneForPixel(it, lighting.activeLedCount)
+                            }.distinct()
+                            for (i in activeZones) {
                                 val isSelected = (selectedLed == i)
                                 val ledColor = lighting.ledColors.getOrElse(i) { RgbColor.NeonGreen }
                                 val composeColor = Color(ledColor.red, ledColor.green, ledColor.blue)
@@ -424,8 +431,28 @@ fun LightingScreen(
                 when (tab) {
                     0 -> ColorsPanel(viewModel, lighting, selectedLed)
                     1 -> EffectsPanel(viewModel, lighting)
-                    2 -> RpmBarPanel(viewModel, shiftConfig)
-                    else -> StartupPanel(viewModel, lighting)
+                    2 -> {
+                        val current = snapshot
+                        if (current?.lightingSetup != null && rpmEditor != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                rpmEditor(current)
+                                WarningCard(viewModel, shiftConfig, adjustRpm = false, warningColor = current.warningColor)
+                            }
+                        } else RpmBarPanel(viewModel, shiftConfig)
+                    }
+                    else -> {
+                        Text("Startup & Strip Setup", style = MaterialTheme.typography.titleLarge)
+                        stripSetup()
+                        if (device?.capabilities?.supportsLightingSetup == true) {
+                            snapshot?.let {
+                                AnimationSetupPanel(it, device?.address, isAuthenticated,
+                                    viewModel::queryAnimationStatus, viewModel::saveAnimationSetup, viewModel::previewAnimation)
+                            }
+                        } else if (device?.isConnected == true) {
+                            Text("Independent ambient animation · Unsupported by this firmware")
+                            StartupPanel(viewModel, lighting)
+                        }
+                    }
                 }
             }
 
