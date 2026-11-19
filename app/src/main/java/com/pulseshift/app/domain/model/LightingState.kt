@@ -15,13 +15,20 @@ data class LightingState(
     // everything else so no screen reads a second, drifting source.
     val ledDirection: Int = 0, // 0 = forward, 1 = reversed
     val startupAnimation: StartupAnimation = StartupAnimation.SWEEP,
-    val startupDurationMs: Int = 2000
+    val startupDurationMs: Int = 2000,
+    val physicalLedCount: Int = LED_ZONE_COUNT
 ) {
     init {
         require(brightness in 0..255) { "Brightness must be 0-255" }
         require(effectSpeed in 0..100) { "Speed must be 0-100" }
-        require(ledColors.size == 6) { "PulseShift strip requires exactly 6 LED colors" }
+        require(ledColors.size == LED_ZONE_COUNT) { "Six logical zone colors are required" }
+        require(physicalLedCount in 1..64)
     }
+
+    val physicalLedColors: List<RgbColor>
+        get() = List(physicalLedCount) { pixel -> ledColors[zoneAtPixel(pixel)] }
+
+    fun zoneAtPixel(pixel: Int): Int = ledZoneForPixel(pixel, physicalLedCount, isDirectionReversed)
 
     val isStartupLooping: Boolean get() = (startupDurationMs and 0x8000) != 0
     val startupCycleDurationMs: Int get() = startupDurationMs and 0x7FFF

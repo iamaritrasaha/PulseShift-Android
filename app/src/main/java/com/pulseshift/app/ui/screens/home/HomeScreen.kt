@@ -484,9 +484,9 @@ private fun RpmGaugeCard(
 
         Spacer(Modifier.height(PulseShiftSpacing.RelatedControls))
 
-        // 4. Prominent 6-LED live preview
+        // Configured strip preview
         LedStripPreview(
-            colors = lighting.ledColors,
+            colors = lighting.physicalLedColors,
             isPowerOn = lighting.isPowerOn,
             brightness = lighting.brightness
         )

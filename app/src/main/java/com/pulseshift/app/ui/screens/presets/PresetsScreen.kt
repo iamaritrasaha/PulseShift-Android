@@ -223,6 +223,7 @@ fun PresetsScreen(
                             isHardwareConfirmed = lightingState.isHardwareConfirmed,
                             isBusy = isBusy,
                             onApply = { viewModel.applyPreset(preset) },
+                            onApplyPermanently = { viewModel.applyPreset(preset, permanent = true) },
                             onDuplicate = { viewModel.duplicatePreset(preset) },
                             onRename = if (preset.isCustom) {
                                 {
@@ -336,6 +337,7 @@ fun PresetListItem(
     isHardwareConfirmed: Boolean = false,
     isBusy: Boolean = false,
     onApply: () -> Unit,
+    onApplyPermanently: () -> Unit,
     onDuplicate: () -> Unit,
     onRename: (() -> Unit)?,
     onDelete: (() -> Unit)?
@@ -431,24 +433,25 @@ fun PresetListItem(
                 }
             }
 
-            // Actions Row
+            Button(
+                onClick = onApplyPermanently,
+                enabled = isConnected && !isBusy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = PulseShiftSpacing.MinTouchTarget)
+            ) {
+                Text("Apply & Save Permanently to ESP32")
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
+                TextButton(
                     onClick = onApply,
                     enabled = isConnected && !isBusy,
-                    modifier = Modifier.heightIn(min = PulseShiftSpacing.MinTouchTarget),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
+                    modifier = Modifier.weight(1f).heightIn(min = PulseShiftSpacing.MinTouchTarget)
                 ) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(PulseShiftSpacing.SmallLabel))
-                    Text(if (isConnected) "Apply & Save to ESP32" else "Connect ESP32 to Apply")
+                    Text("Apply temporarily")
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(PulseShiftSpacing.Micro)) {
@@ -626,7 +629,7 @@ private fun CreatePresetSheet(
                     .fillMaxWidth()
                     .heightIn(min = PulseShiftSpacing.MinTouchTarget)
             ) {
-                Text("Save Preset to Library")
+                Text("Save Preset to Phone")
             }
         }
     }

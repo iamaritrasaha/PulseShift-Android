@@ -378,6 +378,12 @@ fun DeviceCaptureTab(
                     DeviceReportRow("Recording", if (report.captureRecording) "ACTIVE (stage ${report.captureStage})" else "paused")
                     DeviceReportRow("Capture storage", "${report.captureRecords} records, ${report.captureSizeBytes / 1024} KB")
                     DeviceReportRow("Free flash", "${report.storageFree / 1024} KB")
+                    report.configNvs?.let { nvs ->
+                        DeviceReportRow("NVS boot load", nvs.bootDescription)
+                        DeviceReportRow("NVS last save", nvs.saveDescription)
+                        DeviceReportRow("Stored revision", if (nvs.revision != 0L) nvs.revision.toString() else "—")
+                        DeviceReportRow("RAM matches verified flash", if (nvs.matchesActive) "Yes" else "Unconfirmed")
+                    } ?: DeviceReportRow("NVS status", "Unavailable on this firmware")
                     if (report.lastError.isNotBlank()) {
                         DeviceReportRow("Last error", report.lastError, MaterialTheme.colorScheme.error)
                     }

@@ -133,22 +133,22 @@ class TerminalTestRepository : PulseShiftRepository {
     override suspend fun enrollOwner(secret: ByteArray): Boolean = false
     override suspend fun authenticateChallengeResponse(): Boolean = false
     override suspend fun clearStoredOwnerCredential(): Boolean = false
-    override suspend fun setPower(power: Boolean) {}
-    override suspend fun setBrightness(brightness: Int) {}
+    override suspend fun setPower(power: Boolean): Boolean = true
+    override suspend fun setBrightness(brightness: Int): Boolean = true
     override suspend fun setEffect(effect: EffectType): Boolean = setEffectOutcome(effect)
-    override suspend fun setEffectSpeed(speed: Int) {}
-    override suspend fun setGlobalColor(color: RgbColor) {}
-    override suspend fun setIndividualLedColor(index: Int, color: RgbColor) {}
+    override suspend fun setEffectSpeed(speed: Int): Boolean = true
+    override suspend fun setGlobalColor(color: RgbColor): Boolean = true
+    override suspend fun setIndividualLedColor(index: Int, color: RgbColor): Boolean = true
     override suspend fun setAllLedColors(colors: List<RgbColor>) {}
-    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {}
-    override suspend fun setLedDirection(direction: Int) {}
-    override suspend fun setWarningRgb(color: RgbColor) {}
+    override suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int): Boolean = true
+    override suspend fun setLedDirection(direction: Int): Boolean = true
+    override suspend fun setWarningRgb(color: RgbColor): Boolean = true
     override suspend fun updateShiftLightConfig(config: ShiftLightConfig) {}
-    override suspend fun setLedThreshold(index: Int, rpm: Int) {}
+    override suspend fun setLedThreshold(index: Int, rpm: Int): Boolean = true
     override suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float) {}
     override suspend fun setRpmHysteresis(hysteresisRpm: Int) {}
 
-    override suspend fun applyPreset(preset: Preset): PresetApplyResult = PresetApplyResult.READBACK_CONFIRMED
+    override suspend fun applyPreset(preset: Preset, permanent: Boolean): PresetApplyResult = PresetApplyResult.READBACK_CONFIRMED
     override suspend fun savePreset(preset: Preset) {}
     override suspend fun updatePreset(preset: Preset) {}
     override suspend fun duplicatePreset(preset: Preset): Preset? = null

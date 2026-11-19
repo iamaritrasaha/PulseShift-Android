@@ -45,6 +45,7 @@ object PulseShiftBleProtocol {
     const val V2_OPCODE_SET_WARNING_RGB: Byte = 0x1B
     const val V2_OPCODE_SET_RPM_HYSTERESIS: Byte = 0x1C
     const val V2_OPCODE_SET_RPM_DECODER_EXT: Byte = 0x1D
+    const val V2_OPCODE_SET_LED_COUNT: Byte = 0x1E
     const val V2_OPCODE_SAVE_CONFIG: Byte = 0x20
     const val V2_OPCODE_RESTORE_DEFAULTS: Byte = 0x21
     const val V2_OPCODE_RELOAD_CONFIG: Byte = 0x22
@@ -312,7 +313,17 @@ object PulseShiftBleProtocol {
     fun buildSetWarningRgbV2(seq: Int, color: RgbColor, isStaged: Boolean = false): ByteArray =
         buildV2Frame(V2_OPCODE_SET_WARNING_RGB, seq, byteArrayOf(color.red.toByte(), color.green.toByte(), color.blue.toByte()), isStaged)
 
-    fun buildSaveConfigV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_SAVE_CONFIG, seq)
+    fun buildSetLedCountV2(seq: Int, count: Int): ByteArray {
+        require(count in 1..64)
+        return buildV2Frame(V2_OPCODE_SET_LED_COUNT, seq, byteArrayOf(1, count.toByte()))
+    }
+
+    fun buildSaveConfigV2(seq: Int, expectedRevision: Long? = null): ByteArray {
+        val revision = expectedRevision?.let { value ->
+            ByteArray(4) { index -> (value ushr (8 * index)).toByte() }
+        } ?: byteArrayOf()
+        return buildV2Frame(V2_OPCODE_SAVE_CONFIG, seq, revision)
+    }
     fun buildRestoreDefaultsV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_RESTORE_DEFAULTS, seq, byteArrayOf(0xA5.toByte(), 0x5A.toByte()))
     fun buildReloadConfigV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_RELOAD_CONFIG, seq)
     fun buildBeginTransactionV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_BEGIN_TRANSACTION, seq)

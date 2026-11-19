@@ -15,6 +15,7 @@ import com.pulseshift.app.domain.model.AuthState
 import com.pulseshift.app.domain.model.BleDevice
 import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
+import com.pulseshift.app.domain.model.StartupAnimation
 import com.pulseshift.app.domain.model.DeviceCommandPhase
 import com.pulseshift.app.domain.model.DeviceCapabilities
 import com.pulseshift.app.domain.model.OtaUpdateState
@@ -703,7 +704,7 @@ class BleAuthAndLightingRegressionTest {
                                 opcode = PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
                                 sequenceRef = seq,
                                 statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                                resultFlags = 0x01,
+                                resultFlags = 0x04,
                                 activeRevision = 2,
                                 payload = byteArrayOf()
                             )
@@ -828,9 +829,10 @@ class BleAuthAndLightingRegressionTest {
     @Test
     fun testSaveConfigurationToControllerCorrectlyEstablishesNvsPersistenceAndMutationsClearIt() {
         runBlocking {
-            connectedDeviceFlow.value = testDevice
+            connectedDeviceFlow.value = testDevice.copy(capabilities = testDevice.capabilities.copy(supportsVerifiedSave = true))
             connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
+            var flashMatches = false
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
                 val opcode = cmdBytes[1]
@@ -838,14 +840,16 @@ class BleAuthAndLightingRegressionTest {
 
                 when (opcode) {
                     PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG -> {
+                        assertEquals(4, cmdBytes[4].toInt())
+                        flashMatches = true
                         val ack = ConfigAckResponse(
                             version = 2,
                             opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
                             sequenceRef = seq,
                             statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                            resultFlags = 0x03, // success + persisted
+                            resultFlags = 0x05, // applied and persisted
                             activeRevision = 6,
-                            payload = byteArrayOf()
+                            payload = byteArrayOf(1)
                         )
                         configAcksFlow.tryEmit(ack)
                     }
@@ -855,7 +859,7 @@ class BleAuthAndLightingRegressionTest {
                             opcode = PulseShiftBleProtocol.V2_OPCODE_SET_POWER,
                             sequenceRef = seq,
                             statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                            resultFlags = 0x01, // success (in RAM)
+                            resultFlags = 0x04, // applied in RAM
                             activeRevision = 7,
                             payload = byteArrayOf()
                         )
@@ -882,7 +886,8 @@ class BleAuthAndLightingRegressionTest {
                             canCandidateId = 0x301L,
                             candidateByteIndex = 0,
                             isExtendedFrame = false,
-                            calibrationVerified = true
+                            calibrationVerified = true,
+                            matchesFlash = flashMatches
                         )
                         configSnapshotsFlow.value = null
                         configSnapshotsFlow.value = snapshot
@@ -1045,7 +1050,7 @@ class BleAuthAndLightingRegressionTest {
                                 opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
                                 sequenceRef = seq,
                                 statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                                resultFlags = 0x01,
+                                resultFlags = 0x04,
                                 activeRevision = (3 + ledIndex).toLong(),
                                 payload = byteArrayOf()
                             )
@@ -1167,7 +1172,7 @@ class BleAuthAndLightingRegressionTest {
                                 opcode = PulseShiftBleProtocol.V2_OPCODE_SET_LED_RGB,
                                 sequenceRef = seq,
                                 statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                                resultFlags = 0x01,
+                                resultFlags = 0x04,
                                 activeRevision = 5,
                                 payload = byteArrayOf()
                             )
@@ -1216,6 +1221,9 @@ class BleAuthAndLightingRegressionTest {
             connectedDeviceFlow.value = testDevice
             connectionStateFlow.value = BleConnectionState.CONNECTED_WAITING_FOR_DATA
 
+            var flashMatches = false
+            var revision = 2L
+            connectedDeviceFlow.value = testDevice.copy(capabilities = testDevice.capabilities.copy(supportsVerifiedSave = true))
             whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
                 val cmdBytes = invocation.getArgument<ByteArray>(0)
                 val opcode = cmdBytes[1]
@@ -1251,7 +1259,8 @@ class BleAuthAndLightingRegressionTest {
                         val snapshot = ConfigSnapshot(
                             isValid = true,
                             snapshotId = seq,
-                            activeRevision = 2,
+                            activeRevision = revision,
+                            matchesFlash = flashMatches,
                             isPowerOn = true,
                             brightness = 200,
                             effect = com.pulseshift.app.domain.model.EffectType.STATIC,
@@ -1273,26 +1282,29 @@ class BleAuthAndLightingRegressionTest {
                         configSnapshotsFlow.value = snapshot
                     }
                     PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS -> {
+                        revision++
+                        flashMatches = false
                         val ack = ConfigAckResponse(
                             version = 2,
                             opcode = PulseShiftBleProtocol.V2_OPCODE_SET_BRIGHTNESS,
                             sequenceRef = seq,
                             statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                            resultFlags = 0x01, // RAM only
-                            activeRevision = 3,
+                            resultFlags = 0x04, // applied in RAM
+                            activeRevision = revision,
                             payload = byteArrayOf()
                         )
                         configAcksFlow.tryEmit(ack)
                     }
                     PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG -> {
+                        flashMatches = true
                         val ack = ConfigAckResponse(
                             version = 2,
                             opcode = PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
                             sequenceRef = seq,
                             statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
-                            resultFlags = 0x03, // success + persisted in flash
-                            activeRevision = 4,
-                            payload = byteArrayOf()
+                            resultFlags = 0x05, // applied and persisted
+                            activeRevision = revision,
+                            payload = byteArrayOf(1)
                         )
                         configAcksFlow.tryEmit(ack)
                     }
@@ -1656,19 +1668,25 @@ class BleAuthAndLightingRegressionTest {
 
     @Test
     fun testPersistedAckWithoutRamReadbackDoesNotConfirmDisplayedConfiguration() = runBlocking {
-        connectedDeviceFlow.value = testDevice
+        connectedDeviceFlow.value = testDevice.copy(capabilities = testDevice.capabilities.copy(supportsVerifiedSave = true))
+        var saveSent = false
         whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
             val command = invocation.getArgument<ByteArray>(0)
             val opcode = command[1]
+            val seq = (command[2].toInt() and 0xFF) or ((command[3].toInt() and 0xFF) shl 8)
+            if (opcode == PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT && !saveSent) {
+                configSnapshotsFlow.value = ConfigSnapshot(snapshotId = seq, activeRevision = 42L, matchesFlash = false)
+            }
             if (opcode == PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG) {
-                val seq = (command[2].toInt() and 0xFF) or ((command[3].toInt() and 0xFF) shl 8)
+                saveSent = true
                 configAcksFlow.tryEmit(
                     ConfigAckResponse(
                         opcode = opcode,
                         sequenceRef = seq,
                         statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
                         resultFlags = 0x05,
-                        activeRevision = 42L
+                        activeRevision = 42L,
+                        payload = byteArrayOf(1)
                     )
                 )
             }
@@ -1677,11 +1695,81 @@ class BleAuthAndLightingRegressionTest {
         val repository = createRepository()
         repository.setAuthenticatedForTesting(true)
 
-        assertTrue(repository.saveConfigurationToController())
-        assertEquals(DeviceCommandPhase.SAVED, repository.deviceCommandHistory.value.first().phase)
-        assertTrue(repository.isNvsConfirmed.value)
-        assertFalse(repository.hasUnsavedChanges.value)
-        assertTrue(repository.lightingState.value.isSyncUnknown)
+        assertFalse(repository.saveConfigurationToController())
+        assertTrue(saveSent)
+        assertEquals(DeviceCommandPhase.UNVERIFIED, repository.deviceCommandHistory.value.first().phase)
+        assertFalse(repository.isNvsConfirmed.value)
+        assertTrue(repository.hasUnsavedChanges.value)
         assertFalse(repository.lightingState.value.isHardwareConfirmed)
     }
+    @Test
+    fun permanentPresetSavesOnlyAfterExactCommitReadbackAndPreservesStartupLoop() = runBlocking {
+        val preset = shiftedPreset.copy(startupAnimation = StartupAnimation.WAVE, startupDurationMs = 0x8000 or 3040)
+        val commands = java.util.concurrent.CopyOnWriteArrayList<Byte>()
+        var saved = false
+        connectedDeviceFlow.value = testDevice.copy(capabilities = testDevice.capabilities.copy(
+            supportsLoopingStartup = true, supportsVerifiedSave = true
+        ))
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            val frame = invocation.getArgument<ByteArray>(0)
+            val opcode = frame[1]
+            commands.add(opcode)
+            val seq = (frame[2].toInt() and 0xFF) or ((frame[3].toInt() and 0xFF) shl 8)
+            when (opcode) {
+                PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT -> {
+                    configSnapshotsFlow.value = presetSnapshot(seq, 42L).copy(
+                        startupAnimation = preset.startupAnimation,
+                        startupDurationMs = preset.startupDurationMs,
+                        matchesFlash = saved
+                    )
+                }
+                else -> {
+                    val isSave = opcode == PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG
+                    val isStaged = frame[5] == 1.toByte() || opcode == PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION
+                    if (opcode == PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP) {
+                        assertEquals(2, frame[6].toInt())
+                        assertEquals(preset.startupDurationMs, (frame[7].toInt() and 0xFF) or ((frame[8].toInt() and 0xFF) shl 8))
+                    }
+                    if (isSave) {
+                        assertEquals(42, frame[6].toInt())
+                        saved = true
+                    }
+                    configAcksFlow.tryEmit(ConfigAckResponse(
+                        opcode = opcode, sequenceRef = seq, statusCode = PulseShiftBleProtocol.STATUS_SUCCESS,
+                        resultFlags = if (isSave) 0x05 else if (isStaged) 0x02 else 0x04,
+                        activeRevision = if (isStaged) 41L else 42L,
+                        payload = if (isSave) byteArrayOf(1) else byteArrayOf()
+                    ))
+                }
+            }
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        assertEquals(PresetApplyResult.PERSISTED, repository.applyPreset(preset, permanent = true))
+        assertEquals(listOf(
+            PulseShiftBleProtocol.V2_OPCODE_COMMIT_TRANSACTION,
+            PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT,
+            PulseShiftBleProtocol.V2_OPCODE_SAVE_CONFIG,
+            PulseShiftBleProtocol.V2_OPCODE_GET_SNAPSHOT
+        ), commands.takeLast(4))
+        assertTrue(repository.lightingState.value.isStartupLooping)
+        assertEquals(3040, repository.lightingState.value.startupCycleDurationMs)
+        assertTrue(repository.isNvsConfirmed.value)
+    }
+
+    @Test
+    fun oldFirmwareReceivesNoStripCountCommand() = runBlocking {
+        connectedDeviceFlow.value = testDevice
+        val commands = java.util.concurrent.CopyOnWriteArrayList<Byte>()
+        whenever(mockBleManager.enqueueConfigCommand(any())).thenAnswer { invocation ->
+            commands.add(invocation.getArgument<ByteArray>(0)[1])
+            true
+        }
+        val repository = createRepository()
+        repository.setAuthenticatedForTesting(true)
+        assertFalse(repository.setAndSaveLedCount(64))
+        assertFalse(commands.contains(PulseShiftBleProtocol.V2_OPCODE_SET_LED_COUNT))
+    }
+
 }

@@ -768,8 +768,13 @@ fun StartupPanel(
     val device by viewModel.connectedDevice.collectAsState()
     val supportedAnims = device?.capabilities?.supportedStartupAnimations ?: StartupAnimation.entries.toSet()
     val loopingSupported = device?.capabilities?.supportsLoopingStartup == true
-    val isLooping = loopingSupported && lighting.isStartupLooping
-    fun encodedDuration(ms: Int, animation: StartupAnimation = lighting.startupAnimation, loop: Boolean = isLooping): Int =
+    var selectedAnimation by remember { mutableStateOf(lighting.startupAnimation) }
+    var isLooping by remember { mutableStateOf(loopingSupported && lighting.isStartupLooping) }
+    LaunchedEffect(lighting.startupAnimation, lighting.isStartupLooping, loopingSupported) {
+        selectedAnimation = lighting.startupAnimation
+        isLooping = loopingSupported && lighting.isStartupLooping
+    }
+    fun encodedDuration(ms: Int, animation: StartupAnimation = selectedAnimation, loop: Boolean = isLooping): Int =
         (ms.coerceIn(100, 10000) and 0x7FFF) or
             (if (loopingSupported && loop && animation != StartupAnimation.NONE) 0x8000 else 0)
 
@@ -794,7 +799,7 @@ fun StartupPanel(
         ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StartupAnimation.entries.filter { it in supportedAnims }.forEach { animation ->
-                val isSelected = lighting.startupAnimation == animation
+                val isSelected = selectedAnimation == animation
                 val cardBorder = if (isSelected) {
                     BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                 } else {
@@ -814,7 +819,9 @@ fun StartupPanel(
                         .fillMaxWidth()
                         .clip(PulseShiftShapeTokens.Card)
                         .clickable {
-                            viewModel.setStartupAnimation(animation, encodedDuration(durationMs.toInt(), animation))
+                            selectedAnimation = animation
+                            if (animation == StartupAnimation.NONE) isLooping = false
+                            viewModel.setStartupAnimation(animation, encodedDuration(durationMs.toInt()))
                         }
                 ) {
                     Row(
@@ -897,12 +904,13 @@ fun StartupPanel(
             Switch(
                 checked = isLooping,
                 onCheckedChange = { enabled ->
+                    isLooping = enabled
                     viewModel.setStartupAnimation(
-                        lighting.startupAnimation,
+                        selectedAnimation,
                         encodedDuration(durationMs.toInt(), loop = enabled)
                     )
                 },
-                enabled = loopingSupported && lighting.startupAnimation != StartupAnimation.NONE
+                enabled = loopingSupported && selectedAnimation != StartupAnimation.NONE
             )
         }
     }
@@ -947,7 +955,7 @@ fun StartupPanel(
                             onClick = {
                                 val next = (durationMs.toInt() - 250).coerceAtLeast(effectiveMin)
                                 durationMs = next.toFloat()
-                                viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(next))
+                                viewModel.setStartupAnimation(selectedAnimation, encodedDuration(next))
                             },
                             enabled = durationMs.toInt() > effectiveMin,
                             modifier = Modifier.size(36.dp)
@@ -959,7 +967,7 @@ fun StartupPanel(
                             onClick = {
                                 val next = (durationMs.toInt() + 250).coerceAtMost(10000)
                                 durationMs = next.toFloat()
-                                viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(next))
+                                viewModel.setStartupAnimation(selectedAnimation, encodedDuration(next))
                             },
                             enabled = durationMs.toInt() < 10000,
                             modifier = Modifier.size(36.dp)
@@ -978,7 +986,7 @@ fun StartupPanel(
                 },
                 onValueChangeFinished = {
                     isDraggingDuration = false
-                    viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(durationMs.toInt()))
+                    viewModel.setStartupAnimation(selectedAnimation, encodedDuration(durationMs.toInt()))
                 },
                 valueRange = effectiveMin.toFloat()..10000f,
                 modifier = Modifier.fillMaxWidth()
@@ -994,7 +1002,7 @@ fun StartupPanel(
                     Surface(
                         onClick = {
                             durationMs = ms.toFloat()
-                            viewModel.setStartupAnimation(lighting.startupAnimation, encodedDuration(ms))
+                            viewModel.setStartupAnimation(selectedAnimation, encodedDuration(ms))
                         },
                         shape = RoundedCornerShape(8.dp),
                         color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)

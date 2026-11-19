@@ -42,12 +42,8 @@ class RpmViewModel(
     }
 
     fun updateThreshold(index: Int, rpm: Int) {
-        viewModelScope.launch {
-            val current = shiftLightConfig.value.thresholds.toMutableList()
-            if (index in current.indices) {
-                current[index] = rpm
-                repository.updateShiftLightConfig(shiftLightConfig.value.copy(thresholds = current))
-            }
+        if (index in shiftLightConfig.value.thresholds.indices) {
+            repository.queueLightingEdit("RPM stage ${index + 1}") { repository.setLedThreshold(index, rpm) }
         }
     }
 

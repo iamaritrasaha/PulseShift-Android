@@ -10,11 +10,7 @@ import com.pulseshift.app.domain.model.LightingState
 import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 class HomeViewModel(
@@ -33,29 +29,12 @@ class HomeViewModel(
     val isAuthenticated: StateFlow<Boolean> = repository.isAuthenticated
     val lightingSyncError: kotlinx.coroutines.flow.SharedFlow<String> = repository.lightingSyncError
 
-    /** Debounced brightness write: drag gestures must not flood the GATT queue. */
-    private val brightnessInput = MutableStateFlow<Int?>(null)
-
-    init {
-        @OptIn(FlowPreview::class)
-        viewModelScope.launch {
-            brightnessInput.debounce(120).collect { value ->
-                if (value != null) {
-                    repository.setBrightness(value)
-                    brightnessInput.value = null
-                }
-            }
-        }
-    }
-
-    fun updateBrightness(brightness: Int) {
-        brightnessInput.value = brightness
-    }
+    fun updateBrightness(brightness: Int) =
+        repository.queueLightingEdit("brightness") { repository.setBrightness(brightness) }
 
     fun togglePower() {
-        viewModelScope.launch {
-            repository.setPower(!lightingState.value.isPowerOn)
-        }
+        val power = !lightingState.value.isPowerOn
+        repository.queueLightingEdit("power") { repository.setPower(power) }
     }
 
     fun applyPreset(preset: Preset) {

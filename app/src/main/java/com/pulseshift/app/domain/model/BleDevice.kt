@@ -45,7 +45,9 @@ data class DeviceCapabilities(
     val supportsExtendedStartupAnimation: Boolean = false,
     val supportsLoopingStartup: Boolean = false,
     val supportsRangeDiscovery: Boolean = false,
-    val supportsOtaUpdate: Boolean = false
+    val supportsOtaUpdate: Boolean = false,
+    val supportsStripConfig: Boolean = false,
+    val supportsVerifiedSave: Boolean = false
 ) {
     val hasDualOtaSlots: Boolean get() = (otaFlags and 0x02) != 0
     val supportsOtaImageDigest: Boolean get() = (otaFlags and 0x04) != 0
@@ -103,6 +105,8 @@ data class DeviceCapabilities(
                 supportsLoopingStartup = (mask and 0x100000) != 0,
                 supportsRangeDiscovery = (mask and 0x40000) != 0,
                 supportsOtaUpdate = (mask and 0x80000) != 0,
+                supportsStripConfig = protocolMinor >= 4 && (mask and 0x200000) != 0,
+                supportsVerifiedSave = protocolMinor >= 4 && (mask and 0x400000) != 0,
                 hasConfigV2Support = true,
                 supportsLiveRpmVerified = false,
                 maxStartupAnimId = effectiveMaxAnim,

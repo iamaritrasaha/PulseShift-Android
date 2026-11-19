@@ -56,24 +56,24 @@ interface PulseShiftRepository {
     suspend fun clearStoredOwnerCredential(): Boolean
 
     // Configuration Controls
-    suspend fun setPower(power: Boolean)
-    suspend fun setBrightness(brightness: Int)
+    suspend fun setPower(power: Boolean): Boolean
+    suspend fun setBrightness(brightness: Int): Boolean
     suspend fun setEffect(effect: EffectType): Boolean
-    suspend fun setEffectSpeed(speed: Int)
-    suspend fun setGlobalColor(color: RgbColor)
-    suspend fun setIndividualLedColor(index: Int, color: RgbColor)
+    suspend fun setEffectSpeed(speed: Int): Boolean
+    suspend fun setGlobalColor(color: RgbColor): Boolean
+    suspend fun setIndividualLedColor(index: Int, color: RgbColor): Boolean
     suspend fun setAllLedColors(colors: List<RgbColor>)
-    suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int)
-    suspend fun setLedDirection(direction: Int)
-    suspend fun setWarningRgb(color: RgbColor)
+    suspend fun setStartupAnimation(animation: StartupAnimation, durationMs: Int): Boolean
+    suspend fun setLedDirection(direction: Int): Boolean
+    suspend fun setWarningRgb(color: RgbColor): Boolean
     suspend fun updateShiftLightConfig(config: ShiftLightConfig)
     /** Write ONE LED threshold (opcode 0x16) with ACK verification. */
-    suspend fun setLedThreshold(index: Int, rpm: Int)
+    suspend fun setLedThreshold(index: Int, rpm: Int): Boolean
     suspend fun applyDecoderConfiguration(canId: Long, byteIndex: Int, isExtended: Boolean, multiplier: Float)
     suspend fun setRpmHysteresis(hysteresisRpm: Int)
 
     // Presets
-    suspend fun applyPreset(preset: Preset): PresetApplyResult
+    suspend fun applyPreset(preset: Preset, permanent: Boolean = false): PresetApplyResult
     suspend fun savePreset(preset: Preset)
     suspend fun updatePreset(preset: Preset)
     suspend fun duplicatePreset(preset: Preset): Preset?
@@ -85,6 +85,9 @@ interface PulseShiftRepository {
     suspend fun apply1000To6000Profile(): ProfileApplyResult
 
     // Transactions & Non-Volatile Persistence
+    fun queueLightingEdit(key: String, edit: suspend () -> Boolean) {}
+    suspend fun setShiftWarning(rpm: Int, style: Int, color: RgbColor): Boolean = false
+    suspend fun setAndSaveLedCount(count: Int): Boolean = false
     suspend fun saveConfigurationToController(): Boolean
     suspend fun reloadConfigFromController(): ConfigSnapshot?
     suspend fun restoreDefaultControllerConfig()

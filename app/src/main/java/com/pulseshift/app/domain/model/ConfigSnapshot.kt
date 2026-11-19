@@ -28,5 +28,16 @@ data class ConfigSnapshot(
     val rpmOffset: Float = 0.0f,
     val rpmMaxValid: Int = 12000,
     val calibrationVerified: Boolean = false,
-    val isValid: Boolean = true
+    val isValid: Boolean = true,
+    val strip: StripConfiguration? = null,
+    val matchesFlash: Boolean? = null
 )
+
+data class StripConfiguration(val configuredCount: Int, val runningCount: Int, val range: IntRange)
+
+const val LED_ZONE_COUNT = 6
+
+fun ledZoneForPixel(pixel: Int, count: Int, reversed: Boolean = false): Int {
+    val logicalPixel = if (reversed) count - 1 - pixel else pixel
+    return logicalPixel * LED_ZONE_COUNT / count
+}

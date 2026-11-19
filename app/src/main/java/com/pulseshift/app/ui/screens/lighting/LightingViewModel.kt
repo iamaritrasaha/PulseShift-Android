@@ -8,15 +8,12 @@ import com.pulseshift.app.domain.model.ConfigAckResponse
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.EffectType
 import com.pulseshift.app.domain.model.LightingState
-import com.pulseshift.app.domain.model.Preset
 import com.pulseshift.app.domain.model.ProfileApplyResult
 import com.pulseshift.app.domain.model.RgbColor
 import com.pulseshift.app.domain.model.RpmTelemetryState
 import com.pulseshift.app.domain.model.ShiftLightConfig
 import com.pulseshift.app.domain.model.StartupAnimation
 import com.pulseshift.app.domain.model.WarningStyle
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,80 +47,38 @@ class LightingViewModel(
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
 
-    private var brightnessThrottleJob: Job? = null
-    private var speedThrottleJob: Job? = null
-    private var colorThrottleJob: Job? = null
-    private var startupThrottleJob: Job? = null
-    private var warningThrottleJob: Job? = null
-    private val thresholdJobs = Array<Job?>(6) { null }
-
     fun selectLed(index: Int) {
         _selectedLedIndex.value = index
     }
 
-    fun setPower(power: Boolean) {
-        viewModelScope.launch {
-            repository.setPower(power)
-        }
-    }
+    fun setPower(power: Boolean) =
+        repository.queueLightingEdit("power") { repository.setPower(power) }
 
     fun setColor(color: RgbColor) {
-        colorThrottleJob?.cancel()
-        colorThrottleJob = viewModelScope.launch {
-            delay(120) // Paced to avoid overflowing ESP32 4-slot ring buffer
-            if (_selectedLedIndex.value == -1) {
-                repository.setGlobalColor(color)
-            } else {
-                repository.setIndividualLedColor(_selectedLedIndex.value, color)
-            }
+        val zone = _selectedLedIndex.value
+        repository.queueLightingEdit(if (zone < 0) "all colors" else "zone ${zone + 1} color") {
+            if (zone < 0) repository.setGlobalColor(color)
+            else repository.setIndividualLedColor(zone, color)
         }
     }
 
-    fun setEffect(effect: EffectType) {
-        viewModelScope.launch {
-            repository.setEffect(effect)
-        }
-    }
+    fun setEffect(effect: EffectType) =
+        repository.queueLightingEdit("effect") { repository.setEffect(effect) }
 
-    fun setEffectSpeed(speed: Int) {
-        speedThrottleJob?.cancel()
-        speedThrottleJob = viewModelScope.launch {
-            delay(120)
-            repository.setEffectSpeed(speed)
-        }
-    }
+    fun setEffectSpeed(speed: Int) =
+        repository.queueLightingEdit("effect speed") { repository.setEffectSpeed(speed) }
 
-    fun setBrightness(brightness: Int) {
-        brightnessThrottleJob?.cancel()
-        brightnessThrottleJob = viewModelScope.launch {
-            delay(120)
-            repository.setBrightness(brightness)
-        }
-    }
+    fun setBrightness(brightness: Int) =
+        repository.queueLightingEdit("brightness") { repository.setBrightness(brightness) }
 
-    fun setLedDirection(direction: Int) {
-        viewModelScope.launch {
-            repository.setLedDirection(direction)
-        }
-    }
+    fun setLedDirection(direction: Int) =
+        repository.queueLightingEdit("direction") { repository.setLedDirection(direction) }
 
-    fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) {
-        startupThrottleJob?.cancel()
-        startupThrottleJob = viewModelScope.launch {
-            delay(120)
-            repository.setStartupAnimation(animation, durationMs)
-        }
-    }
+    fun setStartupAnimation(animation: StartupAnimation, durationMs: Int) =
+        repository.queueLightingEdit("startup animation") { repository.setStartupAnimation(animation, durationMs) }
 
-    fun updateThreshold(index: Int, newRpm: Int) {
-        thresholdJobs.getOrNull(index)?.cancel()
-        if (index in 0..5) {
-            thresholdJobs[index] = viewModelScope.launch {
-                delay(120)
-                repository.setLedThreshold(index, newRpm)
-            }
-        }
-    }
+    fun updateThreshold(index: Int, newRpm: Int) =
+        repository.queueLightingEdit("RPM stage ${index + 1}") { repository.setLedThreshold(index, newRpm) }
 
     fun apply1000To6000Profile() {
         viewModelScope.launch {
@@ -150,40 +105,34 @@ class LightingViewModel(
 
     fun saveCurrentSetupAsPreset(name: String) {
         viewModelScope.launch {
-            val preset = repository.saveCurrentSetupAsPreset(name)
-            if (preset != null) {
-                _actionFeedback.tryEmit("Saved current setup as '${preset.name}'")
+            try {
+                val preset = repository.saveCurrentSetupAsPreset(name)
+                if (preset != null) {
+                    _actionFeedback.tryEmit("Saved '${preset.name}' to this phone")
+                }
+            } catch (error: IllegalStateException) {
+                _actionFeedback.tryEmit(error.message ?: "Could not save preset to phone")
             }
         }
     }
 
-    fun setShiftWarning(warningRpm: Int, style: WarningStyle, warningColor: RgbColor) {
-        val updatedColors = shiftLightConfig.value.colors.toMutableList()
-        if (updatedColors.size >= 6) {
-            updatedColors[5] = warningColor
+    fun setShiftWarning(warningRpm: Int, style: WarningStyle, warningColor: RgbColor) =
+        repository.queueLightingEdit("shift warning") {
+            repository.setShiftWarning(warningRpm, style.id, warningColor)
         }
-        val updated = shiftLightConfig.value.copy(
-            warningRpm = warningRpm,
-            warningStyle = style,
-            colors = updatedColors
-        )
-        warningThrottleJob?.cancel()
-        warningThrottleJob = viewModelScope.launch {
-            delay(120)
-            repository.updateShiftLightConfig(updated)
-            repository.setWarningRgb(warningColor)
-        }
-    }
 
     fun saveToController() {
         viewModelScope.launch {
+            if (_isBusy.value) return@launch
             _isBusy.value = true
-            val ok = repository.saveConfigurationToController()
-            _isBusy.value = false
-            if (ok) {
-                _actionFeedback.tryEmit("Configuration saved to ESP32 flash (NVS)")
-            } else {
-                _actionFeedback.tryEmit("Failed to save to ESP32 flash (check owner auth)")
+            try {
+                if (repository.saveConfigurationToController()) {
+                    _actionFeedback.tryEmit("ESP32 flash readback verified")
+                } else {
+                    _actionFeedback.tryEmit("Flash save unconfirmed. Check the controller message and retry.")
+                }
+            } finally {
+                _isBusy.value = false
             }
         }
     }
