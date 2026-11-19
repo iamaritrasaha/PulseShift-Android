@@ -12,7 +12,8 @@ data class Preset(
     val startupDurationMs: Int = 2000,
     val isCustom: Boolean = false,
     val shiftLightConfig: ShiftLightConfig? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val lightingSetup: LightingSetup? = null
 ) {
     companion object {
         val DefaultPresets = listOf(

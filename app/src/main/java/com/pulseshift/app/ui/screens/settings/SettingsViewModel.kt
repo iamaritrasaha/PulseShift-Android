@@ -27,18 +27,16 @@ class SettingsViewModel(
 
     enum class StripSaveState { Idle, Saving, Saved, Unconfirmed }
 
-    fun saveLedCount(count: Int) {
+    fun saveLedCount(count: Int, active: Int? = null) {
         if (_stripSave.value == StripSaveState.Saving) return
         _stripSave.value = StripSaveState.Saving
         viewModelScope.launch {
-            _stripSave.value = if (repository.setAndSaveLedCount(count)) StripSaveState.Saved
-                else StripSaveState.Unconfirmed
+            val saved = if (active != null) repository.saveLightingSetup { it.resized(count, active) }
+                else repository.setAndSaveLedCount(count)
+            _stripSave.value = if (saved) StripSaveState.Saved else StripSaveState.Unconfirmed
         }
     }
 
-    fun acknowledgeStripSave() {
-        _stripSave.value = StripSaveState.Idle
-    }
     val otaUpdateState: StateFlow<OtaUpdateState> = repository.otaUpdateState
 
     val themeMode: StateFlow<Int> = dataStore.themeMode.stateIn(

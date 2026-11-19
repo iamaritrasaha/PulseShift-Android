@@ -30,6 +30,12 @@ object PulseShiftBleProtocol {
     // Configuration V2 Opcodes (Canonical Firmware Protocol)
     const val V2_OPCODE_GET_CAPABILITIES: Byte = 0x01
     const val V2_OPCODE_GET_SNAPSHOT: Byte = 0x02
+    const val V2_OPCODE_LIGHTING_BEGIN: Byte = 0x70
+    const val V2_OPCODE_LIGHTING_DATA: Byte = 0x71
+    const val V2_OPCODE_LIGHTING_SAVE: Byte = 0x72
+    const val V2_OPCODE_LIGHTING_CANCEL: Byte = 0x73
+    const val V2_OPCODE_AMBIENT_STATUS: Byte = 0x74
+    const val V2_OPCODE_ANIMATION_PREVIEW: Byte = 0x75
     const val V2_OPCODE_GET_ARG_RANGES: Byte = 0x03
     const val V2_OPCODE_SET_POWER: Byte = 0x10
     const val V2_OPCODE_SET_BRIGHTNESS: Byte = 0x11
@@ -97,6 +103,7 @@ object PulseShiftBleProtocol {
     const val STATUS_ERR_STORAGE_ERROR: Byte = 0x06
     const val STATUS_ERR_VERSION_MISMATCH: Byte = 0x07
     const val STATUS_ERR_VALIDATION_FAILED: Byte = 0x08
+    const val STATUS_ERR_LIGHTING_INTEGRITY: Byte = 0x0B
     const val STATUS_ERR_OTA_CHECKSUM_ERROR: Byte = 0x09
     const val STATUS_ERR_OTA_FLASH_ERROR: Byte = 0x0A
 
@@ -231,7 +238,9 @@ object PulseShiftBleProtocol {
     }
 
     fun buildGetCapabilitiesV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_GET_CAPABILITIES, seq)
-    fun buildGetSnapshotV2(seq: Int): ByteArray = buildV2Frame(V2_OPCODE_GET_SNAPSHOT, seq)
+    fun buildGetSnapshotV2(seq: Int, includeLighting: Boolean = false): ByteArray =
+        buildV2Frame(V2_OPCODE_GET_SNAPSHOT, seq,
+            if (includeLighting) byteArrayOf(LightingSetupCodec.VERSION) else byteArrayOf())
 
     fun buildEnrollOwnerV2(seq: Int, ownerSecret: ByteArray): ByteArray {
         require(ownerSecret.size == 12) { "Owner secret must be 12 bytes" }

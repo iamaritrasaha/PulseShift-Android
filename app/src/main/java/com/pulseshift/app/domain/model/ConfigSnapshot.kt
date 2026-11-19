@@ -30,7 +30,9 @@ data class ConfigSnapshot(
     val calibrationVerified: Boolean = false,
     val isValid: Boolean = true,
     val strip: StripConfiguration? = null,
-    val matchesFlash: Boolean? = null
+    val matchesFlash: Boolean? = null,
+    val lightingSetup: LightingSetup? = null,
+    val savedInstalledLedCount: Int? = null
 )
 
 data class StripConfiguration(val configuredCount: Int, val runningCount: Int, val range: IntRange)

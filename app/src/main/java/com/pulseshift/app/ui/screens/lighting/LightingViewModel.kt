@@ -47,6 +47,16 @@ class LightingViewModel(
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
 
+    suspend fun saveAnimationSetup(
+        boot: com.pulseshift.app.domain.model.AnimationSettings,
+        ambient: com.pulseshift.app.domain.model.AnimationSettings
+    ): Boolean = repository.saveLightingSetup { it.copy(boot = boot, ambient = ambient) }
+
+    suspend fun queryAnimationStatus() = repository.queryAnimationStatus()
+
+    suspend fun previewAnimation(settings: com.pulseshift.app.domain.model.AnimationSettings) =
+        repository.previewAnimation(settings)
+
     fun selectLed(index: Int) {
         _selectedLedIndex.value = index
     }

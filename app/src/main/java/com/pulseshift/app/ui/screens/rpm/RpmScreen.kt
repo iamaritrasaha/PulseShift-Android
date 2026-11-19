@@ -104,6 +104,8 @@ fun RpmScreen(
     val snapshot by viewModel.configSnapshot.collectAsState()
     val config by viewModel.shiftLightConfig.collectAsState()
     val hasUnsavedChanges by viewModel.hasUnsavedChanges.collectAsState()
+    val authenticated by viewModel.isAuthenticated.collectAsState()
+    val device by viewModel.connectedDevice.collectAsState()
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -115,7 +117,7 @@ fun RpmScreen(
                     Column {
                         Text("RPM & Calibration", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "CAN ID 0x301 · 6-LED Thresholds",
+                            text = "RPM mapping and CAN decoder",
                             style = PulseShiftMonoTiny,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -164,7 +166,23 @@ fun RpmScreen(
                     telemetry = currentTelemetry,
                     snapshot = snapshot,
                     config = config,
-                    onThresholdChange = { idx, rpm -> viewModel.updateThreshold(idx, rpm) }
+                    onThresholdChange = { idx, rpm -> viewModel.updateThreshold(idx, rpm) },
+                    mappingEditor = {
+                        if (connected && snapshot?.lightingSetup != null) {
+                            androidx.compose.runtime.key(device?.address) {
+                                RpmMappingEditor(snapshot!!, authenticated, viewModel::saveMapping, viewModel::testMapping)
+                            }
+                        } else if (!connected || snapshot == null) {
+                            Text("Connect to the controller to read supported RPM mapping.")
+                        } else {
+                            Text("This firmware supports grouped RPM stages. Update to edit per-LED thresholds.")
+                            val running = (snapshot?.strip?.runningCount ?: device?.capabilities?.physicalLedCount ?: 6).coerceIn(1, 64)
+                            val groups = (0 until running).map { it * 6 / running }.toSet()
+                            config.thresholds.forEachIndexed { index, rpm ->
+                                if (index in groups) ThresholdSliderCard(index, rpm, viewModel::updateThreshold)
+                            }
+                        }
+                    }
                 )
                 1 -> AdvancedCalibrationView(
                     telemetry = currentTelemetry,
@@ -190,7 +208,8 @@ fun BasicRpmView(
     telemetry: RpmTelemetryState?,
     snapshot: ConfigSnapshot?,
     config: ShiftLightConfig,
-    onThresholdChange: (Int, Int) -> Unit
+    onThresholdChange: (Int, Int) -> Unit,
+    mappingEditor: (@Composable () -> Unit)? = null
 ) {
     val isVerified = telemetry?.statusFlags?.isCalibrationVerified == true
     val isRpmAvailable = telemetry?.isRpmAvailable == true
@@ -320,15 +339,9 @@ fun BasicRpmView(
             }
         }
 
-        // Threshold Sliders List
-        Text("6-LED Activation Thresholds", style = MaterialTheme.typography.titleMedium)
-
-        config.thresholds.forEachIndexed { index, rpm ->
-            ThresholdSliderCard(
-                index = index,
-                rpm = rpm,
-                onThresholdChange = onThresholdChange
-            )
+        if (mappingEditor != null) mappingEditor()
+        else config.thresholds.forEachIndexed { index, rpm ->
+            ThresholdSliderCard(index, rpm, onThresholdChange)
         }
     }
 }
@@ -359,7 +372,7 @@ fun ThresholdSliderCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("LED #${index + 1} Threshold", style = MaterialTheme.typography.bodyMedium)
+                Text("Stage ${index + 1} Threshold", style = MaterialTheme.typography.bodyMedium)
                 Text("${localRpm.toInt()} RPM", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             }
             Slider(

@@ -16,6 +16,12 @@ import com.pulseshift.app.domain.model.CanHealthState
 import com.pulseshift.app.domain.model.CaptureExportState
 import com.pulseshift.app.domain.model.CaptureRecord
 import com.pulseshift.app.domain.model.ConfigAckResponse
+import com.pulseshift.app.data.ble.LightingSetupCodec
+import com.pulseshift.app.domain.model.AmbientPlayback
+import com.pulseshift.app.domain.model.AnimationSettings
+import com.pulseshift.app.domain.model.AnimationStatus
+import com.pulseshift.app.domain.model.LightingSetup
+import com.pulseshift.app.domain.model.RpmMappingMode
 import com.pulseshift.app.domain.model.ConfigSnapshot
 import com.pulseshift.app.domain.model.DeviceCommandOutcome
 import com.pulseshift.app.domain.model.DeviceCommandPhase
@@ -69,6 +75,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
@@ -95,6 +102,7 @@ class BlePulseShiftRepository internal constructor(
         BleConnectionState.READY
     )
     private val configLinkGeneration = AtomicLong()
+    private val lightingTransactionIds = AtomicInteger()
     private var connectionSetupJob: Job? = null
     private var lastSetupDeviceAddress: String? = null
     @Volatile private var nvsConfirmedRevision: Long? = null
@@ -244,6 +252,11 @@ class BlePulseShiftRepository internal constructor(
             _isNvsConfirmed.value = false
             _hasUnsavedChanges.value = true
         }
+        val runningCount = snapshot.strip?.runningCount
+            ?: connectedDevice.value?.capabilities?.physicalLedCount?.takeIf { it in 1..64 }
+            ?: 6
+        val activeCount = snapshot.lightingSetup?.let { it.mapping.activeCount(minOf(runningCount, it.installedLedCount)) }
+            ?: runningCount
         _lightingState.value = LightingState(
             isPowerOn = snapshot.isPowerOn,
             brightness = snapshot.brightness,
@@ -256,9 +269,8 @@ class BlePulseShiftRepository internal constructor(
             ledDirection = snapshot.ledDirection,
             startupAnimation = snapshot.startupAnimation,
             startupDurationMs = snapshot.startupDurationMs,
-            physicalLedCount = snapshot.strip?.configuredCount
-                ?: connectedDevice.value?.capabilities?.physicalLedCount?.takeIf { it in 1..64 }
-                ?: 6
+            physicalLedCount = runningCount,
+            activeLedCount = activeCount
         )
         _shiftLightConfig.value = ShiftLightConfig(
             thresholds = snapshot.rpmThresholds,
@@ -315,9 +327,10 @@ class BlePulseShiftRepository internal constructor(
         snapshotWaiters[sequence] = deferred
 
         return try {
-            if (!bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildGetSnapshotV2(sequence))) return null
+            val extended = connectedDevice.value?.capabilities?.supportsLightingSetup == true
+            if (!bleManager.enqueueConfigCommand(PulseShiftBleProtocol.buildGetSnapshotV2(sequence, extended))) return null
             withTimeout(timeoutMs) {
-                deferred.await()
+                deferred.await().takeIf { !extended || it.lightingSetup != null }
             }
         } catch (e: TimeoutCancellationException) {
             Log.w("PulseShiftRepo", "Timeout waiting ConfigSnapshot for snapshotId/sequence $sequence")
@@ -1314,6 +1327,17 @@ class BlePulseShiftRepository internal constructor(
                 failPreset("Continuous animation preset requires updated ESP32 firmware.")
             }
 
+            val savedSetup = preset.lightingSetup
+            if (savedSetup != null) {
+                if (connectedDevice.value?.capabilities?.supportsLightingSetup != true) {
+                    failPreset("This preset requires the strip and animation extension.")
+                }
+                val current = requestAndWaitSnapshot(nextSeq())?.lightingSetup
+                    ?: failPreset("Could not read strip setup before applying preset.")
+                if (current.installedLedCount != savedSetup.installedLedCount) {
+                    failPreset("This preset was saved for ${savedSetup.installedLedCount} installed LEDs. Set the installed count first.")
+                }
+            }
             val previousState = _lightingState.value
             val wasUnsaved = _hasUnsavedChanges.value
             val colors = List(6) { preset.ledColors.getOrElse(it) { RgbColor.BrandViolet } }
@@ -1335,7 +1359,8 @@ class BlePulseShiftRepository internal constructor(
             try {
                 val seqBegin = nextSeq()
                 val ackBegin = sendCommandAndWaitAck(
-                    PulseShiftBleProtocol.buildBeginTransactionV2(seqBegin),
+                    presetTransaction(seqBegin, shiftConfig != null &&
+                        (savedSetup == null || savedSetup.mapping.mode == RpmMappingMode.LEGACY_GROUPED)),
                     seqBegin,
                     PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION
                 )
@@ -1361,7 +1386,7 @@ class BlePulseShiftRepository internal constructor(
                 stage(PulseShiftBleProtocol.V2_OPCODE_SET_LED_DIRECTION) {
                     PulseShiftBleProtocol.buildSetLedDirectionV2(it, preset.ledDirection, isStaged = true)
                 }
-                stage(PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP) {
+                if (savedSetup == null) stage(PulseShiftBleProtocol.V2_OPCODE_SET_STARTUP) {
                     PulseShiftBleProtocol.buildSetStartupV2(it, preset.startupAnimation.id, preset.startupDurationMs, isStaged = true)
                 }
                 colors.forEachIndexed { index, color ->
@@ -1370,7 +1395,8 @@ class BlePulseShiftRepository internal constructor(
                     }
                 }
                 if (shiftConfig != null) {
-                    shiftConfig.thresholds.forEachIndexed { index, rpm ->
+                    val legacy = savedSetup == null || savedSetup.mapping.mode == RpmMappingMode.LEGACY_GROUPED
+                    if (legacy) shiftConfig.thresholds.forEachIndexed { index, rpm ->
                         stage(PulseShiftBleProtocol.V2_OPCODE_SET_LED_THRESHOLD) {
                             PulseShiftBleProtocol.buildSetLedThresholdV2(it, index, rpm, isStaged = true)
                         }
@@ -1380,6 +1406,16 @@ class BlePulseShiftRepository internal constructor(
                     }
                     stage(PulseShiftBleProtocol.V2_OPCODE_SET_WARNING_RGB) {
                         PulseShiftBleProtocol.buildSetWarningRgbV2(it, shiftConfig.colors.last(), isStaged = true)
+                    }
+                }
+
+                if (savedSetup != null) {
+                    val result = transferLightingSetup(savedSetup, ackBegin.activeRevision, linkGeneration, isStaged = true) {
+                        failPreset(it)
+                    }
+                    if (!result.isStagedOnly || result.isApplied || result.isPersisted ||
+                        result.activeRevision != ackBegin.activeRevision) {
+                        failPreset("The ESP32 did not confirm staged lighting setup.")
                     }
                 }
 
@@ -1534,10 +1570,14 @@ class BlePulseShiftRepository internal constructor(
         if (snapshot.effectSpeed != preset.effectSpeed) add("effect speed")
         if (snapshot.ledColors != preset.ledColors) add("LED colors")
         if (snapshot.ledDirection != preset.ledDirection) add("LED direction")
-        if (snapshot.startupAnimation != preset.startupAnimation) add("startup animation")
-        if (snapshot.startupDurationMs != preset.startupDurationMs) add("startup duration")
+        val setup = preset.lightingSetup
+        if (setup == null) {
+            if (snapshot.startupAnimation != preset.startupAnimation) add("startup animation")
+            if (snapshot.startupDurationMs != preset.startupDurationMs) add("startup duration")
+        } else if (snapshot.lightingSetup != setup) add("strip, RPM and animation settings")
         preset.shiftLightConfig?.let { config ->
-            if (snapshot.rpmThresholds != config.thresholds) add("RPM thresholds")
+            if ((setup == null || setup.mapping.mode == RpmMappingMode.LEGACY_GROUPED) &&
+                snapshot.rpmThresholds != config.thresholds) add("RPM thresholds")
             if (snapshot.warningRpm != config.warningRpm) add("warning RPM")
             if (snapshot.warningPatternId != config.warningStyle.id) add("warning pattern")
             if (snapshot.warningColor != config.colors.last()) add("warning color")
@@ -1604,6 +1644,14 @@ class BlePulseShiftRepository internal constructor(
         }
 
     private suspend fun savePhonePreset(name: String): Preset {
+        val savedSetup = transactionMutex.withLock {
+            if (connectedDevice.value?.capabilities?.supportsLightingSetup == true) {
+                val snapshot = requestAndWaitSnapshot(nextSeq())?.takeIf { it.lightingSetup != null }
+                    ?: throw IllegalStateException("Could not read the current lighting setup for the preset.")
+                applyAuthoritativeSnapshot(snapshot)
+                snapshot.lightingSetup
+            } else null
+        }
         val currentLighting = _lightingState.value
         val currentShift = _shiftLightConfig.value
         val newPreset = Preset(
@@ -1618,6 +1666,7 @@ class BlePulseShiftRepository internal constructor(
             startupDurationMs = currentLighting.startupDurationMs,
             isCustom = true,
             shiftLightConfig = currentShift,
+            lightingSetup = savedSetup,
             createdAt = System.currentTimeMillis()
         )
         val list = _presets.value.toMutableList()
@@ -1626,6 +1675,12 @@ class BlePulseShiftRepository internal constructor(
         _presets.value = list
         return newPreset
     }
+
+    private fun presetTransaction(sequence: Int, includesStages: Boolean): ByteArray =
+        if (includesStages && connectedDevice.value?.capabilities?.supportsLightingSetup == true) {
+            PulseShiftBleProtocol.buildV2Frame(PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION, sequence,
+                byteArrayOf(LightingSetupCodec.VERSION))
+        } else PulseShiftBleProtocol.buildBeginTransactionV2(sequence)
 
     override suspend fun apply1000To6000Profile(): ProfileApplyResult =
         afterConfigurationEdits({ ProfileApplyResult.FAILED }) { failed ->
@@ -1653,7 +1708,7 @@ class BlePulseShiftRepository internal constructor(
             // 1. Begin Staged Transaction
             val seqTx = nextSeq()
             val ackBegin = sendCommandAndWaitAck(
-                PulseShiftBleProtocol.buildBeginTransactionV2(seqTx),
+                presetTransaction(seqTx, true),
                 sequence = seqTx,
                 opcode = PulseShiftBleProtocol.V2_OPCODE_BEGIN_TRANSACTION
             )
@@ -1845,7 +1900,8 @@ class BlePulseShiftRepository internal constructor(
         }
         val after = requestAndWaitSnapshot(nextSeq())?.takeIf { it.isValid }
         if (generation != configLinkGeneration.get() || after == null ||
-            after.copy(snapshotId = 0, matchesFlash = null) != before.copy(snapshotId = 0, matchesFlash = null)) {
+            after.copy(snapshotId = 0, matchesFlash = null, savedInstalledLedCount = null) !=
+            before.copy(snapshotId = 0, matchesFlash = null, savedInstalledLedCount = null)) {
             return saveFailure("Could not verify the same configuration after Save. Reconnect and resync.")
         }
         applyAuthoritativeSnapshot(after)
@@ -1883,6 +1939,118 @@ class BlePulseShiftRepository internal constructor(
                 saveVerifiedConfig(before)
             }
         }
+
+    override suspend fun saveLightingSetup(update: (LightingSetup) -> LightingSetup): Boolean =
+        afterConfigurationEdits({ saveFailure("BLE link changed before saving lighting setup.") }) { failed ->
+            pendingEditFailure(failed)?.let { return@afterConfigurationEdits saveFailure(it) }
+            transactionMutex.withLock {
+                val generation = configLinkGeneration.get()
+                if (connectedDevice.value?.capabilities?.supportsLightingSetup != true || !requireAuthenticated() ||
+                    generation != configLinkGeneration.get()) {
+                    return@withLock saveFailure("Connect to a supported ESP32 and authenticate as owner.")
+                }
+                val before = requestAndWaitSnapshot(nextSeq())
+                val current = before?.lightingSetup
+                    ?: return@withLock saveFailure("Could not read lighting setup from the controller.")
+                val setup = update(current)
+                if (!setup.valid) return@withLock saveFailure("Check LED counts, threshold order, warning RPM and durations.")
+                if (generation != configLinkGeneration.get()) return@withLock saveFailure("BLE link changed during Save.")
+                uploadLightingSetup(before, setup, generation)
+            }
+        }
+
+    private suspend fun lightingCommand(opcode: Byte, payload: ByteArray, sequence: Int = nextSeq(), timeout: Long = 5000L) =
+        sendCommandAndWaitAck(PulseShiftBleProtocol.buildV2Frame(opcode, sequence, payload), sequence, opcode, timeout)
+
+    private suspend fun uploadLightingSetup(before: ConfigSnapshot, setup: LightingSetup, generation: Long): Boolean {
+        val saved = try {
+            transferLightingSetup(setup, before.activeRevision, generation, isStaged = false) {
+                throw IllegalStateException(it)
+            }
+        } catch (error: IllegalStateException) {
+            return saveFailure(error.message ?: "Lighting setup transfer failed.")
+        }
+        val expectedRevision = (before.activeRevision + 1L) and 0xffff_ffffL
+        val after = requestAndWaitSnapshot(nextSeq())
+        if (generation != configLinkGeneration.get() ||
+            !LightingSetupCodec.verifiesSave(saved, after, setup, expectedRevision)) {
+            return saveFailure("Flash readback could not confirm the saved lighting setup. Reconnect and resync.")
+        }
+        applyAuthoritativeSnapshot(requireNotNull(after))
+        recordDeviceCommand("Save lighting setup", DeviceCommandPhase.SAVED,
+            "Flash readback verified for revision $expectedRevision")
+        return true
+    }
+
+    private suspend fun transferLightingSetup(
+        setup: LightingSetup,
+        baseRevision: Long,
+        generation: Long,
+        isStaged: Boolean,
+        fail: (String) -> Nothing
+    ): ConfigAckResponse {
+        val data = LightingSetupCodec.encode(setup)
+        val id = lightingTransactionIds.getAndUpdate { (it + 1) and 0xffff }
+        val transaction = LightingSetupCodec.transactionId(id)
+        var complete = false
+        try {
+            fun requireLink() {
+                if (generation != configLinkGeneration.get()) fail("BLE link changed during lighting setup transfer.")
+            }
+            requireLink()
+            val opcode = PulseShiftBleProtocol.V2_OPCODE_LIGHTING_BEGIN
+            val begin = sendCommandAndWaitAck(
+                PulseShiftBleProtocol.buildV2Frame(opcode, id, LightingSetupCodec.begin(data, baseRevision), isStaged),
+                id, opcode
+            )
+            if (begin?.isSuccess != true || !begin.isStagedOnly) {
+                fail("Could not start lighting setup transfer. ${ackFailureDetail(begin)}.")
+            }
+            for (offset in data.indices step LightingSetupCodec.CHUNK) {
+                requireLink()
+                val end = minOf(offset + LightingSetupCodec.CHUNK, data.size)
+                val ack = lightingCommand(PulseShiftBleProtocol.V2_OPCODE_LIGHTING_DATA,
+                    LightingSetupCodec.chunk(id, offset, data.copyOfRange(offset, end)))
+                if (ack?.isSuccess != true || !ack.isStagedOnly) {
+                    fail("Lighting setup transfer stopped at byte $offset. ${ackFailureDetail(ack)}.")
+                }
+            }
+            requireLink()
+            val result = lightingCommand(PulseShiftBleProtocol.V2_OPCODE_LIGHTING_SAVE, transaction)
+            if (result?.isSuccess != true) fail("Lighting setup save unconfirmed. ${ackFailureDetail(result)}.")
+            complete = true
+            return result
+        } finally {
+            if (!complete && generation == configLinkGeneration.get()) withContext(NonCancellable) {
+                lightingCommand(PulseShiftBleProtocol.V2_OPCODE_LIGHTING_CANCEL, transaction, timeout = 1500L)
+            }
+        }
+    }
+
+    override suspend fun queryAnimationStatus(): AnimationStatus? {
+        if (connectedDevice.value?.capabilities?.supportsLightingSetup != true || !transactionMutex.tryLock()) return null
+        try {
+            val ack = lightingCommand(PulseShiftBleProtocol.V2_OPCODE_AMBIENT_STATUS,
+                byteArrayOf(LightingSetupCodec.VERSION), timeout = 1500L)
+            val payload = ack?.takeIf { it.isSuccess }?.payload ?: return null
+            if (payload.size != 3 || payload[0] != LightingSetupCodec.VERSION || payload[2].toInt() !in 0..1) return null
+            val playback = AmbientPlayback.entries.getOrNull(payload[1].toInt()) ?: return null
+            return AnimationStatus(playback, payload[2].toInt() == 1)
+        } finally {
+            transactionMutex.unlock()
+        }
+    }
+
+    override suspend fun previewAnimation(animation: AnimationSettings): Boolean = transactionMutex.withLock {
+        if (!animation.valid || connectedDevice.value?.capabilities?.supportsLightingSetup != true ||
+            !requireAuthenticated()) return@withLock false
+        val ack = lightingCommand(PulseShiftBleProtocol.V2_OPCODE_ANIMATION_PREVIEW, LightingSetupCodec.preview(animation))
+        if (ack?.isSuccess == true && ack.isApplied && !ack.isPersisted) true
+        else {
+            _lightingError.tryEmit("Controller could not play the animation preview. ${ackFailureDetail(ack)}.")
+            false
+        }
+    }
 
     override suspend fun setAndSaveLedCount(count: Int): Boolean =
         afterConfigurationEdits({ saveFailure("BLE link changed before the LED count update. Reconnect and retry.") }) { failed ->
@@ -2001,6 +2169,7 @@ class BlePulseShiftRepository internal constructor(
             PulseShiftBleProtocol.STATUS_ERR_STORAGE_ERROR -> "Rejected: storage error"
             PulseShiftBleProtocol.STATUS_ERR_VERSION_MISMATCH -> "Rejected: protocol version mismatch"
             PulseShiftBleProtocol.STATUS_ERR_VALIDATION_FAILED -> "Rejected: configuration validation failed"
+            PulseShiftBleProtocol.STATUS_ERR_LIGHTING_INTEGRITY -> "Lighting setup checksum did not match"
             else -> "Failed (status ${ack.statusCode})"
         }
     }
@@ -2367,6 +2536,10 @@ class BlePulseShiftRepository internal constructor(
                     } else null
                     list.add(
                         Preset(
+                            lightingSetup = if (obj.has("lightingSetupV1")) {
+                                LightingSetupCodec.decode(java.util.Base64.getDecoder().decode(obj.getString("lightingSetupV1")))
+                                    ?: throw IllegalArgumentException("Invalid lighting setup")
+                            } else null,
                             id = obj.getString("id"),
                             name = obj.getString("name"),
                             effect = EffectType.entries.firstOrNull { it.id == obj.getInt("effectId") } ?: EffectType.STATIC,
@@ -2406,6 +2579,9 @@ class BlePulseShiftRepository internal constructor(
                 obj.put("startupAnimationId", p.startupAnimation.id)
                 obj.put("startupDurationMs", p.startupDurationMs)
                 obj.put("createdAt", p.createdAt)
+                p.lightingSetup?.let { setup ->
+                    obj.put("lightingSetupV1", java.util.Base64.getEncoder().encodeToString(LightingSetupCodec.encode(setup)))
+                }
                 val colorArr = org.json.JSONArray()
                 for (c in p.ledColors) colorArr.put(c.toHex())
                 obj.put("ledColors", colorArr)

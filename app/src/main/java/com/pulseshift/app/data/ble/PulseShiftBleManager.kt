@@ -358,9 +358,10 @@ class PulseShiftBleManager(
                 return@launch
             }
             _connectionState.value = BleConnectionState.CONNECTING
-            activeGatt?.close()
+            val staleGatt = activeGatt
             activeGatt = null
             val gatt = try {
+                staleGatt?.close()
                 device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
             } catch (e: SecurityException) {
                 Log.w(TAG, "connectGatt denied: ${e.message}")
@@ -1287,7 +1288,10 @@ class PulseShiftBleManager(
                             enqueueGattOp(
                                 GattOp.WriteChar(
                                     configCmdCharacteristic!!,
-                                    PulseShiftBleProtocol.buildGetSnapshotV2(SNAPSHOT_REQUEST_SEQ)
+                                    PulseShiftBleProtocol.buildGetSnapshotV2(
+                                        SNAPSHOT_REQUEST_SEQ,
+                                        _connectedDevice.value?.capabilities?.supportsLightingSetup == true
+                                    )
                                 )
                             )
                         }

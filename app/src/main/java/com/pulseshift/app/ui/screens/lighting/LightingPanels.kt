@@ -529,8 +529,8 @@ fun RpmBarPanel(
 
     // Monotonic RPM Thresholds Table
     SectionCard(
-        title = "Per-LED RPM Thresholds",
-        subtitle = "Activation thresholds in strictly ascending order with anti-chatter hysteresis"
+        title = "Grouped RPM Thresholds",
+        subtitle = "Stage thresholds use nondecreasing RPM with hysteresis"
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             config.thresholds.forEachIndexed { index, rpm ->
@@ -627,17 +627,21 @@ fun RpmBarPanel(
 }
 
 @Composable
-private fun WarningCard(viewModel: LightingViewModel, config: ShiftLightConfig) {
+internal fun WarningCard(
+    viewModel: LightingViewModel,
+    config: ShiftLightConfig,
+    adjustRpm: Boolean = true,
+    warningColor: RgbColor = config.colors.getOrNull(5) ?: RgbColor.RacingRed
+) {
     var warningRpm by remember(config.warningRpm) { mutableIntStateOf(config.warningRpm) }
     var selectedStyle by remember(config.warningStyle) { mutableStateOf(config.warningStyle) }
-    val warningColor = config.colors.getOrNull(5) ?: RgbColor.RacingRed
 
     SectionCard(
         title = "Shift Warning & Redline Flash",
         subtitle = "Triggered when engine RPM exceeds critical threshold"
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(PulseShiftSpacing.RelatedControls)) {
-            val minWarning = (config.thresholds.getOrNull(5) ?: 1000)
+            val minWarning = config.thresholds.lastOrNull() ?: 1000
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -659,7 +663,7 @@ private fun WarningCard(viewModel: LightingViewModel, config: ShiftLightConfig) 
                     )
                 }
 
-                Surface(
+                if (adjustRpm) Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))

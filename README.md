@@ -321,3 +321,31 @@ PulseShift firmware 2.3.0 introduces authenticated Over-The-Air firmware upgrade
 - **Provisional Engine Speed (CAN ID `0x301`):** The preserved 23,370-record motorcycle capture passed CRC16 validation after USB flashing, but the RPM conversion multiplier (40.0) remains an unverified provisional estimate. Shift light mode 4 is disabled until independent tachometer calibration is executed.
 - **Strictly Passive CAN:** The firmware never transmits CAN frames. CTX is clamped to 3V3, GPIO17 is air-gapped, and the TWAI controller operates exclusively in listen-only mode.
 - **Physical BOOT Requirement for Key Enrollment:** Physical button access is required to enroll a phone or recover credentials. This guarantees that nearby unauthorised BLE devices cannot hijack shift light or recording parameters.
+
+## Strip setup and RPM mapping
+
+Open Lighting Studio, then Startup & Strip Setup. The same strip editor is
+available in Settings and during onboarding. The running count is the length
+currently driven by the ESP32. A verified change to the installed count takes
+effect as a new driver length after reboot. Active LEDs are limited by the
+running strip. Normal starts at the data-input end and Reverse starts from the
+far end.
+
+On the RPM page, choose Automatic to set an RPM range, Grouped to assign LED
+counts to stages, or Per LED to assign individual thresholds. The phone
+simulation runs the draft mapping and is independent of motorcycle telemetry.
+The controller bench test sends synthetic RPM through the actual renderer.
+Saving requires owner authentication and full controller flash readback.
+
+Boot Animation runs once. Continuous Ambient Animation has its own pattern
+and cycle duration and runs on the controller whenever safe idle is eligible.
+The displayed status comes from the controller. Preview Animation asks the
+controller to run a temporary preview without saving your form.
+
+Firmware 2.5 or later is required for independent animation controls and
+dynamic RPM maps. Existing six-stage presets and legacy startup settings still
+apply on supported older firmware. A phone preset captured on extended
+firmware retains its mapping and both animations and requires the matching
+configured strip size.
+
+See the [firmware lighting and hardware validation guide](https://github.com/iamaritrasaha/PulseShift/blob/main/docs/LIGHTING-SETUP.md).

@@ -47,6 +47,7 @@ data class DeviceCapabilities(
     val supportsRangeDiscovery: Boolean = false,
     val supportsOtaUpdate: Boolean = false,
     val supportsStripConfig: Boolean = false,
+    val supportsLightingSetup: Boolean = false,
     val supportsVerifiedSave: Boolean = false
 ) {
     val hasDualOtaSlots: Boolean get() = (otaFlags and 0x02) != 0
@@ -106,6 +107,7 @@ data class DeviceCapabilities(
                 supportsRangeDiscovery = (mask and 0x40000) != 0,
                 supportsOtaUpdate = (mask and 0x80000) != 0,
                 supportsStripConfig = protocolMinor >= 4 && (mask and 0x200000) != 0,
+                supportsLightingSetup = protocolMinor >= 5 && (mask and 0x800000) != 0,
                 supportsVerifiedSave = protocolMinor >= 4 && (mask and 0x400000) != 0,
                 hasConfigV2Support = true,
                 supportsLiveRpmVerified = false,

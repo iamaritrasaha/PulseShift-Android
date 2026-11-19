@@ -16,19 +16,24 @@ data class LightingState(
     val ledDirection: Int = 0, // 0 = forward, 1 = reversed
     val startupAnimation: StartupAnimation = StartupAnimation.SWEEP,
     val startupDurationMs: Int = 2000,
-    val physicalLedCount: Int = LED_ZONE_COUNT
+    val physicalLedCount: Int = LED_ZONE_COUNT,
+    val activeLedCount: Int = physicalLedCount
 ) {
     init {
         require(brightness in 0..255) { "Brightness must be 0-255" }
         require(effectSpeed in 0..100) { "Speed must be 0-100" }
         require(ledColors.size == LED_ZONE_COUNT) { "Six logical zone colors are required" }
         require(physicalLedCount in 1..64)
+        require(activeLedCount in 1..physicalLedCount)
     }
 
     val physicalLedColors: List<RgbColor>
-        get() = List(physicalLedCount) { pixel -> ledColors[zoneAtPixel(pixel)] }
+        get() = List(physicalLedCount) { pixel -> ledColors.getOrNull(zoneAtPixel(pixel)) ?: RgbColor(0, 0, 0) }
 
-    fun zoneAtPixel(pixel: Int): Int = ledZoneForPixel(pixel, physicalLedCount, isDirectionReversed)
+    fun zoneAtPixel(pixel: Int): Int {
+        val logical = if (isDirectionReversed) physicalLedCount - 1 - pixel else pixel
+        return if (logical in 0 until activeLedCount) ledZoneForPixel(logical, activeLedCount) else -1
+    }
 
     val isStartupLooping: Boolean get() = (startupDurationMs and 0x8000) != 0
     val startupCycleDurationMs: Int get() = startupDurationMs and 0x7FFF
